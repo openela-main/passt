@@ -1,0 +1,129 @@
+From 96bf75e8ebffe06d33b5dee20c44e16ce53ea663 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Wed, 8 Mar 2023 18:07:42 +0100
+Subject: [PATCH 16/20] tcp: Clamp MSS value when queueing data to tap, also
+ for pasta
+
+Tom reports that a pattern of repated ~1 MiB chunks downloads over
+NNTP over TLS, on Podman 4.4 using pasta as network back-end, results
+in pasta taking one full CPU thread after a while, and the download
+never succeeds.
+
+On that setup, we end up re-sending the same frame over and over,
+with a consistent 65 534 bytes size, and never get an
+acknowledgement from the tap-side client. This only happens for the
+default MTU value (65 520 bytes) or for values that are slightly
+smaller than that (down to 64 499 bytes).
+
+We hit this condition because the MSS value we use in
+tcp_data_from_sock(), only in pasta mode, is simply clamped to
+USHRT_MAX, and not to the actual size of the buffers we pre-cooked
+for sending, which is a bit less than that.
+
+It looks like we got away with it until commit 0fb7b2b9080a ("tap:
+Use different io vector bases depending on tap type") fixed the
+setting of iov_len.
+
+Luckily, since it's pasta, we're queueing up to two frames at a time,
+so the worst that can happen is a badly segmented TCP stream: we
+always have some space at the tail of the buffer.
+
+Clamp the MSS value to the appropriate maximum given by struct
+tcp{4,6}_buf_data_t, no matter if we're running in pasta or passt
+mode.
+
+While at it, fix the comments to those structs to reflect the current
+struct size. This is not really relevant for any further calculation
+or consideration, but it's convenient to know while debugging this
+kind of issues.
+
+Thanks to Tom for reporting the issue in a very detailed way and for
+providing a test setup.
+
+Reported-by: Tom Mombourquette <tom@devnode.com>
+Link: https://github.com/containers/podman/issues/17703
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit d7272f1df89c099a7e98ae43d1ef9b936c7e46f7)
+---
+ tcp.c | 23 +++++++++--------------
+ 1 file changed, 9 insertions(+), 14 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 001fa50..1355b0e 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -460,7 +460,7 @@ static struct tcp4_l2_buf_t {
+ 	struct iphdr iph;	/* 44				28 */
+ 	struct tcphdr th;	/* 64				48 */
+ 	uint8_t data[MSS4];	/* 84				68 */
+-				/* 65541			65525 */
++				/* 65536			65532 */
+ #ifdef __AVX2__
+ } __attribute__ ((packed, aligned(32)))
+ #else
+@@ -488,7 +488,7 @@ struct tcp6_l2_buf_t {
+ 	struct ipv6hdr ip6h;	/* 32				20 */
+ 	struct tcphdr th;	/* 72				60 */
+ 	uint8_t data[MSS6];	/* 92				80 */
+-				/* 65639			65627 */
++				/* 65536			65532 */
+ #ifdef __AVX2__
+ } __attribute__ ((packed, aligned(32)))
+ #else
+@@ -1913,15 +1913,13 @@ int tcp_conn_new_sock(const struct ctx *c, sa_family_t af)
+ 
+ /**
+  * tcp_conn_tap_mss() - Get MSS value advertised by tap/guest
+- * @c:		Execution context
+  * @conn:	Connection pointer
+  * @opts:	Pointer to start of TCP options
+  * @optlen:	Bytes in options: caller MUST ensure available length
+  *
+  * Return: clamped MSS value
+  */
+-static uint16_t tcp_conn_tap_mss(const struct ctx *c,
+-				 const struct tcp_tap_conn *conn,
++static uint16_t tcp_conn_tap_mss(const struct tcp_tap_conn *conn,
+ 				 const char *opts, size_t optlen)
+ {
+ 	unsigned int mss;
+@@ -1932,13 +1930,10 @@ static uint16_t tcp_conn_tap_mss(const struct ctx *c,
+ 	else
+ 		mss = ret;
+ 
+-	/* Don't upset qemu */
+-	if (c->mode == MODE_PASST) {
+-		if (CONN_V4(conn))
+-			mss = MIN(MSS4, mss);
+-		else
+-			mss = MIN(MSS6, mss);
+-	}
++	if (CONN_V4(conn))
++		mss = MIN(MSS4, mss);
++	else
++		mss = MIN(MSS6, mss);
+ 
+ 	return MIN(mss, USHRT_MAX);
+ }
+@@ -2007,7 +2002,7 @@ static void tcp_conn_from_tap(struct ctx *c, int af, const void *addr,
+ 
+ 	conn->wnd_to_tap = WINDOW_DEFAULT;
+ 
+-	mss = tcp_conn_tap_mss(c, conn, opts, optlen);
++	mss = tcp_conn_tap_mss(conn, opts, optlen);
+ 	if (setsockopt(s, SOL_TCP, TCP_MAXSEG, &mss, sizeof(mss)))
+ 		trace("TCP: failed to set TCP_MAXSEG on socket %i", s);
+ 	MSS_SET(conn, mss);
+@@ -2469,7 +2464,7 @@ static void tcp_conn_from_sock_finish(struct ctx *c, struct tcp_tap_conn *conn,
+ 	if (!(conn->wnd_from_tap >>= conn->ws_from_tap))
+ 		conn->wnd_from_tap = 1;
+ 
+-	MSS_SET(conn, tcp_conn_tap_mss(c, conn, opts, optlen));
++	MSS_SET(conn, tcp_conn_tap_mss(conn, opts, optlen));
+ 
+ 	conn->seq_init_from_tap = ntohl(th->seq) + 1;
+ 	conn->seq_from_tap = conn->seq_init_from_tap;
+-- 
+2.39.2
+

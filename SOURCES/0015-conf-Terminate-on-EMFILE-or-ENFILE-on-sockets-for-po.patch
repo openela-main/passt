@@ -1,0 +1,112 @@
+From 1df417752faf52f17d8ec14578ffde89ced32772 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Wed, 8 Mar 2023 13:21:19 +0100
+Subject: [PATCH 15/20] conf: Terminate on EMFILE or ENFILE on sockets for port
+ mapping
+
+In general, we don't terminate or report failures if we fail to bind
+to some ports out of a given port range specifier, to allow users to
+conveniently specify big port ranges (or "all") without having to
+care about ports that might already be in use.
+
+However, running out of the open file descriptors quota is a
+different story: we can't do what the user requested in a very
+substantial way.
+
+For example, if the user specifies '-t all' and we can only bind
+1024 sockets, the behaviour is rather unexpected.
+
+Fail whenever socket creation returns -ENFILE or -EMFILE.
+
+Link: https://bugs.passt.top/show_bug.cgi?id=27
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit bb2b67cb3549ea2509f5b7b88790e08d2e362351)
+---
+ conf.c | 36 +++++++++++++++++++++++++++++-------
+ 1 file changed, 29 insertions(+), 7 deletions(-)
+
+diff --git a/conf.c b/conf.c
+index 37f25d6..7f25a22 100644
+--- a/conf.c
++++ b/conf.c
+@@ -182,6 +182,7 @@ static void conf_ports(const struct ctx *c, char optname, const char *optarg,
+ 	bool exclude_only = true, bound_one = false;
+ 	uint8_t exclude[PORT_BITMAP_SIZE] = { 0 };
+ 	sa_family_t af = AF_UNSPEC;
++	int ret;
+ 
+ 	if (!strcmp(optarg, "none")) {
+ 		if (fwd->mode)
+@@ -216,11 +217,18 @@ static void conf_ports(const struct ctx *c, char optname, const char *optarg,
+ 
+ 		for (i = 0; i < PORT_EPHEMERAL_MIN; i++) {
+ 			if (optname == 't') {
+-				if (!tcp_sock_init(c, AF_UNSPEC, NULL, NULL, i))
++				ret = tcp_sock_init(c, AF_UNSPEC, NULL, NULL,
++						    i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			} else if (optname == 'u') {
+-				if (!udp_sock_init(c, 0, AF_UNSPEC, NULL, NULL,
+-						   i))
++				ret = udp_sock_init(c, 0, AF_UNSPEC, NULL, NULL,
++						    i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			}
+ 		}
+@@ -301,10 +309,16 @@ static void conf_ports(const struct ctx *c, char optname, const char *optarg,
+ 			bitmap_set(fwd->map, i);
+ 
+ 			if (optname == 't') {
+-				if (!tcp_sock_init(c, af, addr, ifname, i))
++				ret = tcp_sock_init(c, af, addr, ifname, i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			} else if (optname == 'u') {
+-				if (!udp_sock_init(c, 0, af, addr, ifname, i))
++				ret = udp_sock_init(c, 0, af, addr, ifname, i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			} else {
+ 				/* No way to check in advance for -T and -U */
+@@ -356,10 +370,16 @@ static void conf_ports(const struct ctx *c, char optname, const char *optarg,
+ 			fwd->delta[i] = mapped_range.first - orig_range.first;
+ 
+ 			if (optname == 't') {
+-				if (!tcp_sock_init(c, af, addr, ifname, i))
++				ret = tcp_sock_init(c, af, addr, ifname, i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			} else if (optname == 'u') {
+-				if (!udp_sock_init(c, 0, af, addr, ifname, i))
++				ret = udp_sock_init(c, 0, af, addr, ifname, i);
++				if (ret == -ENFILE || ret == -EMFILE)
++					goto enfile;
++				if (!ret)
+ 					bound_one = true;
+ 			} else {
+ 				/* No way to check in advance for -T and -U */
+@@ -372,6 +392,8 @@ static void conf_ports(const struct ctx *c, char optname, const char *optarg,
+ 		goto bind_fail;
+ 
+ 	return;
++enfile:
++	die("Can't open enough sockets for port specifier: %s", optarg);
+ bad:
+ 	die("Invalid port specifier %s", optarg);
+ overlap:
+-- 
+2.39.2
+

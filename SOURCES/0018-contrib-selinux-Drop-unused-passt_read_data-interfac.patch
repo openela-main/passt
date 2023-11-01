@@ -1,0 +1,34 @@
+From 6b5f382f342ad4a0a46e30b5ba165713768e363a Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 10 Mar 2023 14:53:37 +0000
+Subject: [PATCH 18/20] contrib/selinux: Drop unused passt_read_data()
+ interface
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit dcdc50fc2251339d6e929f708fad114e61b60627)
+---
+ contrib/selinux/passt.if | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/contrib/selinux/passt.if b/contrib/selinux/passt.if
+index a79a8ec..3e37c5b 100644
+--- a/contrib/selinux/passt.if
++++ b/contrib/selinux/passt.if
+@@ -8,14 +8,6 @@
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+ 
+-interface(`passt_read_data',`
+-	gen_require(`
+-		type passt_data_t;
+-	')
+-	allow $1 passt_t:dir { search add_name };
+-	allow $1 passt_t:file { open read getattr };
+-')
+-
+ interface(`passt_domtrans',`
+ 	gen_require(`
+ 		type passt_t, passt_exec_t;
+-- 
+2.39.2
+

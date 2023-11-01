@@ -1,0 +1,65 @@
+From 7c01aa69bcd52197af708b9e08ce3067624288ef Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 6 Mar 2023 23:19:18 +0000
+Subject: [PATCH 12/20] contrib/selinux: Let interface users set paths for log,
+ PID, socket files
+
+Even libvirt itself will configure passt to write log, PID and socket
+files to different locations depending on whether the domain is
+started as root (/var/log/libvirt/...) or as a regular user
+(/var/log/<PID>/libvirt/...), and user_tmp_t would only cover the
+latter.
+
+Create interfaces for log and PID files, so that callers can specify
+different file contexts for those, and modify the interface for the
+UNIX socket file to allow different paths as well.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Tested-by: Laine Stump <laine@redhat.com>
+Reviewed-by: Laine Stump <laine@redhat.com>
+(cherry picked from commit d361fe6e809bdf3539d764cfa5058f46ce51bcbf)
+---
+ contrib/selinux/passt.if | 26 +++++++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/contrib/selinux/passt.if b/contrib/selinux/passt.if
+index 893395b..6a6105c 100644
+--- a/contrib/selinux/passt.if
++++ b/contrib/selinux/passt.if
+@@ -30,8 +30,32 @@ interface(`passt_socket',`
+ 		type passt_t;
+ 	')
+ 
+-	allow $1 user_tmp_t:sock_file write;
++	allow $1 $2:sock_file write;
+ 	allow $1 passt_t:unix_stream_socket connectto;
++
++	allow passt_t $2:sock_file { create read write unlink };
++')
++
++interface(`passt_logfile',`
++	gen_require(`
++		type passt_t;
++	')
++
++	logging_log_file($1);
++	allow passt_t $1:dir { search write add_name };
++	allow passt_t $1:file { create open read write };
++')
++
++interface(`passt_pidfile',`
++	gen_require(`
++		type passt_t;
++	')
++
++	allow $1 $2:file { open read unlink };
++
++	files_pid_file($2);
++	allow passt_t $2:dir { search write add_name };
++	allow passt_t $2:file { create open write };
+ ')
+ 
+ interface(`passt_kill',`
+-- 
+2.39.2
+

@@ -1,0 +1,47 @@
+From 0dfc25b917f7e94ac56ea4285a5d394305787b06 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Thu, 23 Feb 2023 12:21:29 +0000
+Subject: [PATCH 01/20] udp: Actually use host resolver to forward DNS queries
+
+Instead of the address of the first resolver we advertise to
+the guest or namespace.
+
+This was one of the intentions behind commit 3a2afde87dd1 ("conf,
+udp: Drop mostly duplicated dns_send arrays, rename related fields"),
+but I forgot to implement this part. In practice, they are usually
+the same thing, unless /etc/resolv.conf points to a loopback address.
+
+Fixes: 3a2afde87dd1 ("conf, udp: Drop mostly duplicated dns_send arrays, rename related fields")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Tested-by: Andrea Bolognani <abologna@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit ddf7097a718095e879428667f2d56ec7d4f027e5)
+---
+ udp.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/udp.c b/udp.c
+index c913d27..1d65559 100644
+--- a/udp.c
++++ b/udp.c
+@@ -867,7 +867,7 @@ int udp_tap_handler(struct ctx *c, int af, const void *addr,
+ 		} else if (IN4_ARE_ADDR_EQUAL(&s_in.sin_addr,
+ 					      &c->ip4.dns_match) &&
+ 			   ntohs(s_in.sin_port) == 53) {
+-			s_in.sin_addr = c->ip4.dns[0];
++			s_in.sin_addr = c->ip4.dns_host;
+ 		}
+ 	} else {
+ 		s_in6 = (struct sockaddr_in6) {
+@@ -890,7 +890,7 @@ int udp_tap_handler(struct ctx *c, int af, const void *addr,
+ 				s_in6.sin6_addr = c->ip6.addr_seen;
+ 		} else if (IN6_ARE_ADDR_EQUAL(addr, &c->ip6.dns_match) &&
+ 			   ntohs(s_in6.sin6_port) == 53) {
+-			s_in6.sin6_addr = c->ip6.dns[0];
++			s_in6.sin6_addr = c->ip6.dns_host;
+ 		} else if (IN6_IS_ADDR_LINKLOCAL(&s_in6.sin6_addr)) {
+ 			bind_addr = &c->ip6.addr_ll;
+ 		}
+-- 
+2.39.2
+

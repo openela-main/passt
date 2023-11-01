@@ -1,0 +1,29 @@
+From bbeecf78cf598f24bd2f1434dfbb3fad7b549f59 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 6 Mar 2023 22:48:21 +0000
+Subject: [PATCH 09/20] contrib/selinux: Drop duplicate init_daemon_domain()
+ rule
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Tested-by: Laine Stump <laine@redhat.com>
+Reviewed-by: Laine Stump <laine@redhat.com>
+(cherry picked from commit 009af75e450aae1d4e9e031a9e42a0e74ce1adf7)
+---
+ contrib/selinux/passt.te | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
+index 7fa4fb9..593b346 100644
+--- a/contrib/selinux/passt.te
++++ b/contrib/selinux/passt.te
+@@ -57,7 +57,6 @@ type passt_t;
+ domain_type(passt_t);
+ type passt_exec_t;
+ files_type(passt_exec_t);
+-init_daemon_domain(passt_t, passt_exec_t)
+ type passt_log_t;
+ logging_log_file(passt_log_t);
+ type passt_etc_t;
+-- 
+2.39.2
+
