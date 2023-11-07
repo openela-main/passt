@@ -1,0 +1,52 @@
+From 6977619743bbc602a865f79562b59a80921d6063 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 21 Aug 2023 17:52:28 +0200
+Subject: [PATCH] selinux: Drop user_namespace create allow rules
+
+Those are incompatible with current el9 kernels. I introduced them
+upstream with commit 62059058cf24 ("selinux: Fix user namespace
+creation after breaking kernel change"), in turn as a result of
+kernel commit ed5d44d42c95 ("selinux: Implement userns_create hook"),
+but on current el9 kernels (which lack the hook) they result in
+failures such as:
+
+  Failed to resolve allow statement at /var/lib/selinux/targeted/tmp/modules/200/passt/cil:103
+  Failed to resolve AST
+  /usr/sbin/semodule:  Failed!
+  Failed to resolve allow statement at /var/lib/selinux/targeted/tmp/modules/200/pasta/cil:104
+  Failed to resolve AST
+  /usr/sbin/semodule:  Failed!
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ contrib/selinux/passt.te | 1 -
+ contrib/selinux/pasta.te | 1 -
+ 2 files changed, 2 deletions(-)
+
+diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
+index facc2d1..de10f45 100644
+--- a/contrib/selinux/passt.te
++++ b/contrib/selinux/passt.te
+@@ -93,7 +93,6 @@ allow syslogd_t self:cap_userns sys_ptrace;
+ allow passt_t self:process setcap;
+ allow passt_t self:capability { sys_tty_config setpcap net_bind_service setuid setgid};
+ allow passt_t self:cap_userns { setpcap sys_admin sys_ptrace };
+-allow passt_t self:user_namespace create;
+ 
+ allow passt_t passwd_file_t:file read_file_perms;
+ sssd_search_lib(passt_t)
+diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
+index ed70c5f..3226e37 100644
+--- a/contrib/selinux/pasta.te
++++ b/contrib/selinux/pasta.te
+@@ -113,7 +113,6 @@ init_daemon_domain(pasta_t, pasta_exec_t)
+ 
+ allow pasta_t self:capability { setpcap net_bind_service sys_tty_config dac_read_search net_admin sys_resource setuid setgid };
+ allow pasta_t self:cap_userns { setpcap sys_admin sys_ptrace net_admin net_bind_service };
+-allow pasta_t self:user_namespace create;
+ 
+ allow pasta_t passwd_file_t:file read_file_perms;
+ sssd_search_lib(pasta_t)
+-- 
+2.39.2
+
