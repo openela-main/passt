@@ -7,40 +7,22 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash 4ddbcb9c0c555838b123c018a9ebc9b7e14a87e5
+%global git_hash 0af928eaa020c1062fdc91598dfdc533966e2afe
 %global selinuxtype targeted
 
 Name:		passt
-Version:	0^20230222.g4ddbcb9
+Version:	0^20230818.g0af928e
 Release:	4%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
-License:	AGPLv3+ and BSD
+License:	GPLv2+ and BSD
 Group:		System Environment/Daemons
 URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
-Patch1: 0001-udp-Actually-use-host-resolver-to-forward-DNS-querie.patch
-Patch2: 0002-conf-Split-add_dns-4-6-out-of-get_dns.patch
-Patch3: 0003-conf-udp-Allow-any-loopback-address-to-be-used-as-re.patch
-Patch4: 0004-tcp-tcp_splice-Get-rid-of-false-positive-CWE-394-Cov.patch
-Patch5: 0005-tcp-Avoid-false-but-convoluted-positive-Coverity-CWE.patch
-Patch6: 0006-tcp-Avoid-theoretical-resource-leak-CWE-772-Coverity.patch
-Patch7: 0007-Fix-definitions-of-SOCKET_MAX-TCP_MAX_CONNS.patch
-Patch8: 0008-doc-demo-Fix-and-suppress-ShellCheck-warnings.patch
-Patch9: 0009-contrib-selinux-Drop-duplicate-init_daemon_domain-ru.patch
-Patch10: 0010-contrib-selinux-Let-passt-write-to-stdout-and-stderr.patch
-Patch11: 0011-contrib-selinux-Allow-binding-and-connecting-to-all-.patch
-Patch12: 0012-contrib-selinux-Let-interface-users-set-paths-for-lo.patch
-Patch13: 0013-tcp-udp-util-Pass-socket-creation-errors-all-the-way.patch
-Patch14: 0014-tcp-udp-Fix-partial-success-return-codes-in-tcp-udp-.patch
-Patch15: 0015-conf-Terminate-on-EMFILE-or-ENFILE-on-sockets-for-po.patch
-Patch16: 0016-tcp-Clamp-MSS-value-when-queueing-data-to-tap-also-f.patch
-Patch17: 0017-contrib-selinux-Drop-example-from-headers-this-is-th.patch
-Patch18: 0018-contrib-selinux-Drop-unused-passt_read_data-interfac.patch
-Patch19: 0019-contrib-selinux-Split-interfaces-into-smaller-bits.patch
+Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
-Requires: (%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
+Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
 
 %description
 passt implements a translation layer between a Layer-2 network interface and
@@ -74,8 +56,20 @@ This package adds SELinux enforcement to passt(1) and pasta(1).
 %make_build VERSION="%{version}-%{release}.%{_arch}"
 
 %install
+
 %make_install DESTDIR=%{buildroot} prefix=%{_prefix} bindir=%{_bindir} mandir=%{_mandir} docdir=%{_docdir}/%{name}
+# The Makefile creates symbolic links for pasta, but we need hard links for
+# SELinux file contexts to work as intended. Same with pasta.avx2 if present.
+#
+# RHEL 9 note: switch from hard links to copies -- given that the behaviour
+# differs depending on filesystems and how cpio builds archives. This leads to
+# "Duplicate build-ids" warnings for rpmbuild at the moment, we need to find a
+# better solution upstream.
+rm %{buildroot}%{_bindir}/pasta
+cp %{buildroot}%{_bindir}/passt %{buildroot}%{_bindir}/pasta
 %ifarch x86_64
+rm %{buildroot}%{_bindir}/pasta.avx2
+cp %{buildroot}%{_bindir}/passt.avx2 %{buildroot}%{_bindir}/pasta.avx2
 ln -sr %{buildroot}%{_mandir}/man1/passt.1 %{buildroot}%{_mandir}/man1/passt.avx2.1
 ln -sr %{buildroot}%{_mandir}/man1/pasta.1 %{buildroot}%{_mandir}/man1/pasta.avx2.1
 %endif
@@ -104,7 +98,7 @@ fi
 %selinux_relabel_post -s %{selinuxtype}
 
 %files
-%license LICENSES/{AGPL-3.0-or-later.txt,BSD-3-Clause.txt}
+%license LICENSES/{GPL-2.0-or-later.txt,BSD-3-Clause.txt}
 %dir %{_docdir}/%{name}
 %doc %{_docdir}/%{name}/README.md
 %doc %{_docdir}/%{name}/demo.sh
@@ -127,6 +121,22 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 
 %changelog
+* Tue Aug 22 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230818.g0af928e-4
+- Switch to copies instead of links for pasta: previous workaround unreliable
+- Resolves: RHELPLAN-155811
+
+* Tue Aug 22 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230818.g0af928e-3
+- Explicit restorecon in scriptlet as rpm(8) mix up contexts with hard links
+- Resolves: RHELPLAN-155811
+
+* Mon Aug 21 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230818.g0af928e-2
+- Drop user_namespace create allow rule, incompatible with current el9 kernel
+- Resolves: RHELPLAN-155811
+
+* Sat Aug 19 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230818.g0af928e-1
+- Rebase from Fedora 39
+- Resolves: RHELPLAN-155811
+
 * Sun Jun 11 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230222.g4ddbcb9-4
 - Drop (pointless) patches 20, 21, 22, actually apply changes to the spec file!
 - Refresh SELinux labels in scriptlets, require -selinux package (rhbz#2183089)
