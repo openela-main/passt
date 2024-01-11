@@ -1,0 +1,98 @@
+From def7d05a8babf5ea227f688f1f3a8bce286f97a3 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 10 Mar 2023 14:53:14 +0000
+Subject: [PATCH 17/20] contrib/selinux: Drop "example" from headers: this is
+ the actual policy
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 9f35cf0b11891e9dfb12eeb5d52f728881f84967)
+---
+ contrib/selinux/passt.fc | 2 +-
+ contrib/selinux/passt.if | 2 +-
+ contrib/selinux/passt.te | 2 +-
+ contrib/selinux/pasta.fc | 2 +-
+ contrib/selinux/pasta.if | 2 +-
+ contrib/selinux/pasta.te | 2 +-
+ 6 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/contrib/selinux/passt.fc b/contrib/selinux/passt.fc
+index 286c868..88e388e 100644
+--- a/contrib/selinux/passt.fc
++++ b/contrib/selinux/passt.fc
+@@ -3,7 +3,7 @@
+ # PASST - Plug A Simple Socket Transport
+ #  for qemu/UNIX domain socket mode
+ #
+-# contrib/selinux/passt.fc - SELinux profile example: File Context for passt
++# contrib/selinux/passt.fc - SELinux profile: File Context for passt
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+diff --git a/contrib/selinux/passt.if b/contrib/selinux/passt.if
+index 6a6105c..a79a8ec 100644
+--- a/contrib/selinux/passt.if
++++ b/contrib/selinux/passt.if
+@@ -3,7 +3,7 @@
+ # PASST - Plug A Simple Socket Transport
+ #  for qemu/UNIX domain socket mode
+ #
+-# contrib/selinux/passt.if - SELinux profile example: Interface File for passt
++# contrib/selinux/passt.if - SELinux profile: Interface File for passt
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
+index 438155d..590ad40 100644
+--- a/contrib/selinux/passt.te
++++ b/contrib/selinux/passt.te
+@@ -3,7 +3,7 @@
+ # PASST - Plug A Simple Socket Transport
+ #  for qemu/UNIX domain socket mode
+ #
+-# contrib/selinux/passt.te - SELinux profile example: Type Enforcement for passt
++# contrib/selinux/passt.te - SELinux profile: Type Enforcement for passt
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+diff --git a/contrib/selinux/pasta.fc b/contrib/selinux/pasta.fc
+index f8fa0fa..e72b4ac 100644
+--- a/contrib/selinux/pasta.fc
++++ b/contrib/selinux/pasta.fc
+@@ -3,7 +3,7 @@
+ # PASTA - Pack A Subtle Tap Abstraction
+ #  for network namespace/tap device mode
+ #
+-# contrib/selinux/pasta.fc - SELinux profile example: File Context for pasta
++# contrib/selinux/pasta.fc - SELinux profile: File Context for pasta
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+diff --git a/contrib/selinux/pasta.if b/contrib/selinux/pasta.if
+index a42bfcd..149045a 100644
+--- a/contrib/selinux/pasta.if
++++ b/contrib/selinux/pasta.if
+@@ -3,7 +3,7 @@
+ # PASTA - Pack A Subtle Tap Abstraction
+ #  for network namespace/tap device mode
+ #
+-# contrib/selinux/pasta.if - SELinux profile example: Interface File for pasta
++# contrib/selinux/pasta.if - SELinux profile: Interface File for pasta
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
+index 8986c0c..7856019 100644
+--- a/contrib/selinux/pasta.te
++++ b/contrib/selinux/pasta.te
+@@ -3,7 +3,7 @@
+ # PASTA - Pack A Subtle Tap Abstraction
+ #  for network namespace/tap device mode
+ #
+-# contrib/selinux/pasta.te - SELinux profile example: Type Enforcement for pasta
++# contrib/selinux/pasta.te - SELinux profile: Type Enforcement for pasta
+ #
+ # Copyright (c) 2022 Red Hat GmbH
+ # Author: Stefano Brivio <sbrivio@redhat.com>
+-- 
+2.39.2
+

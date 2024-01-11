@@ -1,0 +1,243 @@
+From 812d24c91aecff78369f32f6593045f24d578d38 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Wed, 8 Mar 2023 12:14:29 +0100
+Subject: [PATCH 13/20] tcp, udp, util: Pass socket creation errors all the way
+ up
+
+...starting from sock_l4(), pass negative error (errno) codes instead
+of -1. They will only be used in two commits from now, no functional
+changes intended here.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 73992c42cea0df56f6ba0a3bef0f4a939f26ebad)
+---
+ tcp.c  | 22 ++++++++++++----------
+ udp.c  | 18 +++++++++---------
+ util.c | 31 ++++++++++++++++++-------------
+ 3 files changed, 39 insertions(+), 32 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index fe6e458..482c2f9 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -2891,7 +2891,7 @@ void tcp_sock_handler(struct ctx *c, union epoll_ref ref, uint32_t events,
+  * @addr:	Pointer to address for binding, NULL if not configured
+  * @ifname:	Name of interface to bind to, NULL if not configured
+  *
+- * Return: fd for the new listening socket, or -1 on failure
++ * Return: fd for the new listening socket, negative error code on failure
+  */
+ static int tcp_sock_init_af(const struct ctx *c, int af, in_port_t port,
+ 			    const struct in_addr *addr, const char *ifname)
+@@ -2904,13 +2904,13 @@ static int tcp_sock_init_af(const struct ctx *c, int af, in_port_t port,
+ 
+ 	if (c->tcp.fwd_in.mode == FWD_AUTO) {
+ 		if (af == AF_INET  || af == AF_UNSPEC)
+-			tcp_sock_init_ext[port][V4] = s;
++			tcp_sock_init_ext[port][V4] = s < 0 ? -1 : s;
+ 		if (af == AF_INET6 || af == AF_UNSPEC)
+-			tcp_sock_init_ext[port][V6] = s;
++			tcp_sock_init_ext[port][V6] = s < 0 ? -1 : s;
+ 	}
+ 
+ 	if (s < 0)
+-		return -1;
++		return s;
+ 
+ 	tcp_sock_set_bufsize(c, s);
+ 	return s;
+@@ -2924,12 +2924,12 @@ static int tcp_sock_init_af(const struct ctx *c, int af, in_port_t port,
+  * @ifname:	Name of interface to bind to, NULL if not configured
+  * @port:	Port, host order
+  *
+- * Return: 0 on (partial) success, -1 on (complete) failure
++ * Return: 0 on (partial) success, negative error code on (complete) failure
+  */
+ int tcp_sock_init(const struct ctx *c, sa_family_t af, const void *addr,
+ 		  const char *ifname, in_port_t port)
+ {
+-	int ret = 0;
++	int ret = 0, af_ret;
+ 
+ 	if (af == AF_UNSPEC && c->ifi4 && c->ifi6)
+ 		/* Attempt to get a dual stack socket */
+@@ -2938,13 +2938,15 @@ int tcp_sock_init(const struct ctx *c, sa_family_t af, const void *addr,
+ 
+ 	/* Otherwise create a socket per IP version */
+ 	if ((af == AF_INET  || af == AF_UNSPEC) && c->ifi4) {
+-		if (tcp_sock_init_af(c, AF_INET, port, addr, ifname) < 0)
+-			ret = -1;
++		af_ret = tcp_sock_init_af(c, AF_INET, port, addr, ifname);
++		if (af_ret < 0)
++			ret = af_ret;
+ 	}
+ 
+ 	if ((af == AF_INET6 || af == AF_UNSPEC) && c->ifi6) {
+-		if (tcp_sock_init_af(c, AF_INET6, port, addr, ifname) < 0)
+-			ret = -1;
++		af_ret = tcp_sock_init_af(c, AF_INET6, port, addr, ifname);
++		if (af_ret < 0)
++			ret = af_ret;
+ 	}
+ 
+ 	return ret;
+diff --git a/udp.c b/udp.c
+index 20a9ea0..9a43835 100644
+--- a/udp.c
++++ b/udp.c
+@@ -956,7 +956,7 @@ int udp_tap_handler(struct ctx *c, int af, const void *addr,
+  * @ifname:	Name of interface to bind to, NULL if not configured
+  * @port:	Port, host order
+  *
+- * Return: 0 on (partial) success, -1 on (complete) failure
++ * Return: 0 on (partial) success, negative error code on (complete) failure
+  */
+ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 		  const void *addr, const char *ifname, in_port_t port)
+@@ -981,19 +981,19 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 			s = sock_l4(c, AF_INET, IPPROTO_UDP, addr, ifname,
+ 				    port, uref.u32);
+ 
+-			udp_tap_map[V4][uref.udp.port].sock = s;
+-			udp_splice_init[V4][port].sock = s;
++			udp_tap_map[V4][uref.udp.port].sock = s < 0 ? -1 : s;
++			udp_splice_init[V4][port].sock = s < 0 ? -1 : s;
+ 		} else {
+ 			struct in_addr loopback = { htonl(INADDR_LOOPBACK) };
+ 			uref.udp.ns = true;
+ 
+ 			s = sock_l4(c, AF_INET, IPPROTO_UDP, &loopback,
+ 				    ifname, port, uref.u32);
+-			udp_splice_ns[V4][port].sock = s;
++			udp_splice_ns[V4][port].sock = s < 0 ? -1 : s;
+ 		}
+ 
+ 		if (s < 0)
+-			ret = -1;
++			ret = s;
+ 	}
+ 
+ 	if ((af == AF_INET6 || af == AF_UNSPEC) && c->ifi6) {
+@@ -1005,18 +1005,18 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 			s = sock_l4(c, AF_INET6, IPPROTO_UDP, addr, ifname,
+ 				    port, uref.u32);
+ 
+-			udp_tap_map[V6][uref.udp.port].sock = s;
+-			udp_splice_init[V6][port].sock = s;
++			udp_tap_map[V6][uref.udp.port].sock = s < 0 ? -1 : s;
++			udp_splice_init[V6][port].sock = s < 0 ? -1 : s;
+ 		} else {
+ 			uref.udp.ns = true;
+ 
+ 			s = sock_l4(c, AF_INET6, IPPROTO_UDP, &in6addr_loopback,
+ 				    ifname, port, uref.u32);
+-			udp_splice_ns[V6][port].sock = s;
++			udp_splice_ns[V6][port].sock = s < 0 ? -1 : s;
+ 		}
+ 
+ 		if (s < 0)
+-			ret = -1;
++			ret = s;
+ 	}
+ 
+ 	return ret;
+diff --git a/util.c b/util.c
+index c5ee1c0..13f8fab 100644
+--- a/util.c
++++ b/util.c
+@@ -95,7 +95,7 @@ found:
+  * @port:	Port, host order
+  * @data:	epoll reference portion for protocol handlers
+  *
+- * Return: newly created socket, -1 on error
++ * Return: newly created socket, negative error code on failure
+  */
+ int sock_l4(const struct ctx *c, int af, uint8_t proto,
+ 	    const void *bind_addr, const char *ifname, uint16_t port,
+@@ -114,16 +114,16 @@ int sock_l4(const struct ctx *c, int af, uint8_t proto,
+ 	};
+ 	const struct sockaddr *sa;
+ 	bool dual_stack = false;
++	int fd, sl, y = 1, ret;
+ 	struct epoll_event ev;
+-	int fd, sl, y = 1;
+ 
+ 	if (proto != IPPROTO_TCP && proto != IPPROTO_UDP &&
+ 	    proto != IPPROTO_ICMP && proto != IPPROTO_ICMPV6)
+-		return -1;	/* Not implemented. */
++		return -EPFNOSUPPORT;	/* Not implemented. */
+ 
+ 	if (af == AF_UNSPEC) {
+ 		if (!DUAL_STACK_SOCKETS || bind_addr)
+-			return -1;
++			return -EINVAL;
+ 		dual_stack = true;
+ 		af = AF_INET6;
+ 	}
+@@ -133,14 +133,15 @@ int sock_l4(const struct ctx *c, int af, uint8_t proto,
+ 	else
+ 		fd = socket(af, SOCK_DGRAM | SOCK_NONBLOCK, proto);
+ 
++	ret = -errno;
+ 	if (fd < 0) {
+-		warn("L4 socket: %s", strerror(errno));
+-		return -1;
++		warn("L4 socket: %s", strerror(-ret));
++		return ret;
+ 	}
+ 
+ 	if (fd > SOCKET_MAX) {
+ 		close(fd);
+-		return -1;
++		return -EBADF;
+ 	}
+ 
+ 	ref.r.s = fd;
+@@ -185,10 +186,11 @@ int sock_l4(const struct ctx *c, int af, uint8_t proto,
+ 		 */
+ 		if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE,
+ 			       ifname, strlen(ifname))) {
++			ret = -errno;
+ 			warn("Can't bind socket for %s port %u to %s, closing",
+ 			     ip_proto_str[proto], port, ifname);
+ 			close(fd);
+-			return -1;
++			return ret;
+ 		}
+ 	}
+ 
+@@ -199,22 +201,25 @@ int sock_l4(const struct ctx *c, int af, uint8_t proto,
+ 		 * broken SELinux policy, see icmp_tap_handler().
+ 		 */
+ 		if (proto != IPPROTO_ICMP && proto != IPPROTO_ICMPV6) {
++			ret = -errno;
+ 			close(fd);
+-			return -1;
++			return ret;
+ 		}
+ 	}
+ 
+ 	if (proto == IPPROTO_TCP && listen(fd, 128) < 0) {
+-		warn("TCP socket listen: %s", strerror(errno));
++		ret = -errno;
++		warn("TCP socket listen: %s", strerror(-ret));
+ 		close(fd);
+-		return -1;
++		return ret;
+ 	}
+ 
+ 	ev.events = EPOLLIN;
+ 	ev.data.u64 = ref.u64;
+ 	if (epoll_ctl(c->epollfd, EPOLL_CTL_ADD, fd, &ev) == -1) {
+-		warn("L4 epoll_ctl: %s", strerror(errno));
+-		return -1;
++		ret = -errno;
++		warn("L4 epoll_ctl: %s", strerror(-ret));
++		return ret;
+ 	}
+ 
+ 	return fd;
+-- 
+2.39.2
+

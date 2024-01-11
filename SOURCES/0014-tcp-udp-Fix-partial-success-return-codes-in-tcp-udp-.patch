@@ -1,0 +1,139 @@
+From 8f71f17cc087fc80f1cbe9b71852b95916a9afbc Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Wed, 8 Mar 2023 12:38:39 +0100
+Subject: [PATCH 14/20] tcp, udp: Fix partial success return codes in
+ {tcp,udp}_sock_init()
+
+The comments say we should return 0 on partial success, and an error
+code on complete failure. Rationale: if the user configures a port
+forwarding, and we succeed to bind that port for IPv4 or IPv6 only,
+that might actually be what the user intended.
+
+Adjust the two functions to reflect the comments.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 5aea2f88ab5f63f01885109a4afb1271607fc06b)
+---
+ tcp.c | 21 +++++++++------------
+ udp.c | 30 ++++++++++++++----------------
+ 2 files changed, 23 insertions(+), 28 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 482c2f9..001fa50 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -2929,7 +2929,7 @@ static int tcp_sock_init_af(const struct ctx *c, int af, in_port_t port,
+ int tcp_sock_init(const struct ctx *c, sa_family_t af, const void *addr,
+ 		  const char *ifname, in_port_t port)
+ {
+-	int ret = 0, af_ret;
++	int r4 = SOCKET_MAX + 1, r6 = SOCKET_MAX + 1;
+ 
+ 	if (af == AF_UNSPEC && c->ifi4 && c->ifi6)
+ 		/* Attempt to get a dual stack socket */
+@@ -2937,19 +2937,16 @@ int tcp_sock_init(const struct ctx *c, sa_family_t af, const void *addr,
+ 			return 0;
+ 
+ 	/* Otherwise create a socket per IP version */
+-	if ((af == AF_INET  || af == AF_UNSPEC) && c->ifi4) {
+-		af_ret = tcp_sock_init_af(c, AF_INET, port, addr, ifname);
+-		if (af_ret < 0)
+-			ret = af_ret;
+-	}
++	if ((af == AF_INET  || af == AF_UNSPEC) && c->ifi4)
++		r4 = tcp_sock_init_af(c, AF_INET, port, addr, ifname);
+ 
+-	if ((af == AF_INET6 || af == AF_UNSPEC) && c->ifi6) {
+-		af_ret = tcp_sock_init_af(c, AF_INET6, port, addr, ifname);
+-		if (af_ret < 0)
+-			ret = af_ret;
+-	}
++	if ((af == AF_INET6 || af == AF_UNSPEC) && c->ifi6)
++		r6 = tcp_sock_init_af(c, AF_INET6, port, addr, ifname);
+ 
+-	return ret;
++	if (IN_INTERVAL(0, SOCKET_MAX, r4) || IN_INTERVAL(0, SOCKET_MAX, r6))
++		return 0;
++
++	return r4 < 0 ? r4 : r6;
+ }
+ 
+ /**
+diff --git a/udp.c b/udp.c
+index 9a43835..20ee0f2 100644
+--- a/udp.c
++++ b/udp.c
+@@ -962,7 +962,7 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 		  const void *addr, const char *ifname, in_port_t port)
+ {
+ 	union udp_epoll_ref uref = { .u32 = 0 };
+-	int s, ret = 0;
++	int s, r4 = SOCKET_MAX + 1, r6 = SOCKET_MAX + 1;
+ 
+ 	if (ns) {
+ 		uref.udp.port = (in_port_t)(port +
+@@ -978,8 +978,8 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 		uref.udp.orig = true;
+ 
+ 		if (!ns) {
+-			s = sock_l4(c, AF_INET, IPPROTO_UDP, addr, ifname,
+-				    port, uref.u32);
++			r4 = s = sock_l4(c, AF_INET, IPPROTO_UDP, addr,
++					 ifname, port, uref.u32);
+ 
+ 			udp_tap_map[V4][uref.udp.port].sock = s < 0 ? -1 : s;
+ 			udp_splice_init[V4][port].sock = s < 0 ? -1 : s;
+@@ -987,13 +987,10 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 			struct in_addr loopback = { htonl(INADDR_LOOPBACK) };
+ 			uref.udp.ns = true;
+ 
+-			s = sock_l4(c, AF_INET, IPPROTO_UDP, &loopback,
+-				    ifname, port, uref.u32);
++			r4 = s = sock_l4(c, AF_INET, IPPROTO_UDP, &loopback,
++					 ifname, port, uref.u32);
+ 			udp_splice_ns[V4][port].sock = s < 0 ? -1 : s;
+ 		}
+-
+-		if (s < 0)
+-			ret = s;
+ 	}
+ 
+ 	if ((af == AF_INET6 || af == AF_UNSPEC) && c->ifi6) {
+@@ -1002,24 +999,25 @@ int udp_sock_init(const struct ctx *c, int ns, sa_family_t af,
+ 		uref.udp.orig = true;
+ 
+ 		if (!ns) {
+-			s = sock_l4(c, AF_INET6, IPPROTO_UDP, addr, ifname,
+-				    port, uref.u32);
++			r6 = s = sock_l4(c, AF_INET6, IPPROTO_UDP, addr,
++					 ifname, port, uref.u32);
+ 
+ 			udp_tap_map[V6][uref.udp.port].sock = s < 0 ? -1 : s;
+ 			udp_splice_init[V6][port].sock = s < 0 ? -1 : s;
+ 		} else {
+ 			uref.udp.ns = true;
+ 
+-			s = sock_l4(c, AF_INET6, IPPROTO_UDP, &in6addr_loopback,
+-				    ifname, port, uref.u32);
++			r6 = s = sock_l4(c, AF_INET6, IPPROTO_UDP,
++					 &in6addr_loopback,
++					 ifname, port, uref.u32);
+ 			udp_splice_ns[V6][port].sock = s < 0 ? -1 : s;
+ 		}
+-
+-		if (s < 0)
+-			ret = s;
+ 	}
+ 
+-	return ret;
++	if (IN_INTERVAL(0, SOCKET_MAX, r4) || IN_INTERVAL(0, SOCKET_MAX, r6))
++		return 0;
++
++	return r4 < 0 ? r4 : r6;
+ }
+ 
+ /**
+-- 
+2.39.2
+

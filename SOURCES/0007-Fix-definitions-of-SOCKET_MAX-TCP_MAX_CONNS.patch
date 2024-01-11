@@ -1,0 +1,84 @@
+From 44d35498a98da3d3234b0084033f6dcd6450e22b Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 27 Feb 2023 03:30:01 +0100
+Subject: [PATCH 07/20] Fix definitions of SOCKET_MAX, TCP_MAX_CONNS
+
+...and, given that I keep getting this wrong, add a convenience
+macro, MAX_FROM_BITS().
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 26a0e4d6ee17fa174a401d8e8d9a4c189f11f258)
+---
+ passt.h    | 4 ++--
+ tcp.h      | 4 ++--
+ tcp_conn.h | 2 +-
+ util.h     | 2 ++
+ 4 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/passt.h b/passt.h
+index 3d7e567..e0383eb 100644
+--- a/passt.h
++++ b/passt.h
+@@ -42,7 +42,7 @@ union epoll_ref;
+ /**
+  * union epoll_ref - Breakdown of reference for epoll socket bookkeeping
+  * @proto:	IP protocol number
+- * @s:		Socket number (implies 2^24 limit on number of descriptors)
++ * @s:		Socket number (implies 2^24-1 limit on number of descriptors)
+  * @tcp:	TCP-specific reference part
+  * @udp:	UDP-specific reference part
+  * @icmp:	ICMP-specific reference part
+@@ -53,7 +53,7 @@ union epoll_ref {
+ 	struct {
+ 		int32_t		proto:8,
+ #define SOCKET_REF_BITS		24
+-#define SOCKET_MAX		(1 << SOCKET_REF_BITS)
++#define SOCKET_MAX		MAX_FROM_BITS(SOCKET_REF_BITS)
+ 				s:SOCKET_REF_BITS;
+ 		union {
+ 			union tcp_epoll_ref tcp;
+diff --git a/tcp.h b/tcp.h
+index 5527c5b..36e5391 100644
+--- a/tcp.h
++++ b/tcp.h
+@@ -8,8 +8,8 @@
+ 
+ #define TCP_TIMER_INTERVAL		1000	/* ms */
+ 
+-#define TCP_CONN_INDEX_BITS		17	/* 128k */
+-#define TCP_MAX_CONNS			(1 << TCP_CONN_INDEX_BITS)
++#define TCP_CONN_INDEX_BITS		17	/* 128k - 1 */
++#define TCP_MAX_CONNS			MAX_FROM_BITS(TCP_CONN_INDEX_BITS)
+ 
+ struct ctx;
+ 
+diff --git a/tcp_conn.h b/tcp_conn.h
+index a499f34..c22632b 100644
+--- a/tcp_conn.h
++++ b/tcp_conn.h
+@@ -54,7 +54,7 @@ struct tcp_tap_conn {
+ 
+ #define TCP_RETRANS_BITS		3
+ 	unsigned int	retrans		:TCP_RETRANS_BITS;
+-#define TCP_MAX_RETRANS			((1U << TCP_RETRANS_BITS) - 1)
++#define TCP_MAX_RETRANS			MAX_FROM_BITS(TCP_RETRANS_BITS)
+ 
+ #define TCP_WS_BITS			4	/* RFC 7323 */
+ #define TCP_WS_MAX			14
+diff --git a/util.h b/util.h
+index 6303c17..570094c 100644
+--- a/util.h
++++ b/util.h
+@@ -40,6 +40,8 @@
+ #define ROUND_DOWN(x, y)	((x) & ~((y) - 1))
+ #define ROUND_UP(x, y)		(((x) + (y) - 1) & ~((y) - 1))
+ 
++#define MAX_FROM_BITS(n)	((int)((1U << (n)) - 1))
++
+ #define BIT(n)			(1UL << (n))
+ #define BITMAP_BIT(n)		(BIT((n) % (sizeof(long) * 8)))
+ #define BITMAP_WORD(n)		(n / (sizeof(long) * 8))
+-- 
+2.39.2
+

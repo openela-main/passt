@@ -1,0 +1,44 @@
+From 8d631f17e11d6c9f1c01eb0dc1cb104ac45e63ac Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 27 Feb 2023 03:44:25 +0100
+Subject: [PATCH 08/20] doc/demo: Fix and suppress ShellCheck warnings
+
+ShellCheck reports (SC2034) that __qemu_arch is not used. Use it,
+and silence the resulting SC2086 warning as we want word splitting on
+options we pass with it.
+
+While at it, silence SC2317 warnings for commands in cleanup() that
+appear to be unreachable: cleanup() is only called as trap.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit fb05a713789fd9c20d0432f023ce26f3c5b94251)
+---
+ doc/demo.sh | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/doc/demo.sh b/doc/demo.sh
+index ed71ffb..5b05ddf 100755
+--- a/doc/demo.sh
++++ b/doc/demo.sh
+@@ -110,6 +110,7 @@ next() {
+ }
+ 
+ # cleanup() - Terminate pasta and passt, clean up, restore TTY settings
++# shellcheck disable=SC2317
+ cleanup() {
+ 	[ -f "${DEMO_DIR}/pasta.pid" ] && kill "$(cat "${DEMO_DIR}/pasta.pid")"
+ 	[ -f "${DEMO_DIR}/passt.pid" ] && kill "$(cat "${DEMO_DIR}/passt.pid")"
+@@ -223,7 +224,8 @@ into_ns() {
+ 	echo "Use ^C to terminate it."
+ 	next
+ 
+-	cmd qrap 5 qemu-system-x86_64 -M pc,accel=kvm:tcg		    \
++	# shellcheck disable=SC2086
++	cmd qrap 5 ${__qemu_arch}					    \
+ 		-smp "$(nproc)" -m 1024					    \
+ 		-nographic -serial stdio -nodefaults -no-reboot -vga none   \
+ 		-initrd "${DEMO_DIR}/demo.img"				    \
+-- 
+2.39.2
+
