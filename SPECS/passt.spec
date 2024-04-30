@@ -7,12 +7,12 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash 0af928eaa020c1062fdc91598dfdc533966e2afe
+%global git_hash b86afe3559c0bd3d24bc6fed7c60466cf141224c
 %global selinuxtype targeted
 
 Name:		passt
-Version:	0^20230818.g0af928e
-Release:	4%{?dist}
+Version:	0^20231204.gb86afe3
+Release:	1%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPLv2+ and BSD
 Group:		System Environment/Daemons
@@ -53,25 +53,30 @@ This package adds SELinux enforcement to passt(1) and pasta(1).
 
 %build
 %set_build_flags
-%make_build VERSION="%{version}-%{release}.%{_arch}"
+# The Makefile creates symbolic links for pasta, but we need actual copies for
+# SELinux file contexts to work as intended. Same with pasta.avx2 if present.
+# Build twice, changing the version string, to avoid duplicate Build-IDs.
+%make_build VERSION="%{version}-%{release}.%{_arch}-pasta"
+mv -f passt pasta
+%ifarch x86_64
+mv -f passt.avx2 pasta.avx2
+%make_build passt passt.avx2 VERSION="%{version}-%{release}.%{_arch}"
+%else
+%make_build passt VERSION="%{version}-%{release}.%{_arch}"
+%endif
 
 %install
+# Already built (not as symbolic links), see above
+touch pasta
+%ifarch x86_64
+touch pasta.avx2
+%endif
 
 %make_install DESTDIR=%{buildroot} prefix=%{_prefix} bindir=%{_bindir} mandir=%{_mandir} docdir=%{_docdir}/%{name}
-# The Makefile creates symbolic links for pasta, but we need hard links for
-# SELinux file contexts to work as intended. Same with pasta.avx2 if present.
-#
-# RHEL 9 note: switch from hard links to copies -- given that the behaviour
-# differs depending on filesystems and how cpio builds archives. This leads to
-# "Duplicate build-ids" warnings for rpmbuild at the moment, we need to find a
-# better solution upstream.
-rm %{buildroot}%{_bindir}/pasta
-cp %{buildroot}%{_bindir}/passt %{buildroot}%{_bindir}/pasta
 %ifarch x86_64
-rm %{buildroot}%{_bindir}/pasta.avx2
-cp %{buildroot}%{_bindir}/passt.avx2 %{buildroot}%{_bindir}/pasta.avx2
 ln -sr %{buildroot}%{_mandir}/man1/passt.1 %{buildroot}%{_mandir}/man1/passt.avx2.1
 ln -sr %{buildroot}%{_mandir}/man1/pasta.1 %{buildroot}%{_mandir}/man1/pasta.avx2.1
+install -p -m 755 %{buildroot}%{_bindir}/passt.avx2 %{buildroot}%{_bindir}/pasta.avx2
 %endif
 
 pushd contrib/selinux
@@ -121,6 +126,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 
 %changelog
+* Fri Dec 15 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20231204.gb86afe3-1
+- Resolves: RHEL-19590
+
 * Tue Aug 22 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20230818.g0af928e-4
 - Switch to copies instead of links for pasta: previous workaround unreliable
 - Resolves: RHELPLAN-155811
