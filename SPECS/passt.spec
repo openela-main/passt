@@ -7,19 +7,20 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash b86afe3559c0bd3d24bc6fed7c60466cf141224c
+%global git_hash ee36266a55478672ad2c5f4efbd6ca0bef3d37cd
 %global selinuxtype targeted
 
 Name:		passt
-Version:	0^20231204.gb86afe3
-Release:	1%{?dist}
+Version:	0^20240806.gee36266
+Release:	2%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
-License:	GPLv2+ and BSD
+License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
 URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
+Patch2:		0002-flow-Don-t-crash-if-guest-attempts-to-connect-to-por.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -126,6 +127,21 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 
 %changelog
+* Wed Aug 14 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-2
+- Resolves: RHEL-54268
+
+* Wed Aug  7 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806.gee36266-1
+- Resolves: RHEL-53189
+
+* Fri Aug  2 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240726.g57a21d2-1
+- Resolves: RHEL-52638
+
+* Mon Jun 24 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240624.g1ee2eca-1
+- Resolves: RHEL-44837
+
+* Wed May 22 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240510.g7288448-1
+- Resolves: RHEL-37647
+
 * Fri Dec 15 2023 Stefano Brivio <sbrivio@redhat.com> - 0^20231204.gb86afe3-1
 - Resolves: RHEL-19590
 

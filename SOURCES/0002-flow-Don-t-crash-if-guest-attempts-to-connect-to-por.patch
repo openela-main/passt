@@ -1,0 +1,64 @@
+From 002b2a23380d4df552bac7665d462ac4c7bced0b Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 14 Aug 2024 20:03:33 +1000
+Subject: [PATCH] flow: Don't crash if guest attempts to connect to port 0
+
+Using a zero port on TCP or UDP is dubious, and we can't really deal with
+forwarding such a flow within the constraints of the socket API.  Hence
+we ASSERT()ed that we had non-zero ports in flow_hash().
+
+The intention was to make sure that the protocol code sanitizes such ports
+before completing a flow entry.  Unfortunately, flow_hash() is also called
+on new packets to see if they have an existing flow, so the unsanitized
+guest packet can crash passt with the assert.
+
+Correct this by moving the assert from flow_hash() to flow_sidx_hash()
+which is only used on entries already in the table, not on unsanitized
+data.
+
+Reported-by: Matt Hamilton <matt@thmail.io>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ flow.c | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/flow.c b/flow.c
+index 687e9fd..93b687d 100644
+--- a/flow.c
++++ b/flow.c
+@@ -561,12 +561,6 @@ static uint64_t flow_hash(const struct ctx *c, uint8_t proto, uint8_t pif,
+ {
+ 	struct siphash_state state = SIPHASH_INIT(c->hash_secret);
+ 
+-	/* For the hash table to work, we need complete endpoint information,
+-	 * and at least a forwarding port.
+-	 */
+-	ASSERT(pif != PIF_NONE && !inany_is_unspecified(&side->eaddr) &&
+-	       side->eport != 0 && side->fport != 0);
+-
+ 	inany_siphash_feed(&state, &side->faddr);
+ 	inany_siphash_feed(&state, &side->eaddr);
+ 
+@@ -586,8 +580,16 @@ static uint64_t flow_hash(const struct ctx *c, uint8_t proto, uint8_t pif,
+ static uint64_t flow_sidx_hash(const struct ctx *c, flow_sidx_t sidx)
+ {
+ 	const struct flow_common *f = &flow_at_sidx(sidx)->f;
+-	return flow_hash(c, FLOW_PROTO(f),
+-			 f->pif[sidx.sidei], &f->side[sidx.sidei]);
++	const struct flowside *side = &f->side[sidx.sidei];
++	uint8_t pif = f->pif[sidx.sidei];
++
++	/* For the hash table to work, entries must have complete endpoint
++	 * information, and at least a forwarding port.
++	 */
++	ASSERT(pif != PIF_NONE && !inany_is_unspecified(&side->eaddr) &&
++	       side->eport != 0 && side->fport != 0);
++
++	return flow_hash(c, FLOW_PROTO(f), pif, side);
+ }
+ 
+ /**
+-- 
+2.43.0
+
