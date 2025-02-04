@@ -1,0 +1,43 @@
+From 7ad9f9bd2bbda8d705e0c6faf5acf2792fce063c Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Fri, 6 Sep 2024 15:17:05 +1000
+Subject: [PATCH] flow: Fix incorrect hash probe in flowside_lookup()
+
+Our flow hash table uses linear probing in which we step backwards through
+clusters of adjacent hash entries when we have near collisions.  Usually
+that's implemented by flow_hash_probe().  However, due to some details we
+need a second implementation in flowside_lookup().  An embarrassing
+oversight in rebasing from earlier versions has mean that version is
+incorrect, trying to step forward through clusters rather than backward.
+
+In situations with the right sorts of has near-collisions this can lead to
+us not associating an ACK from the tap device with the right flow, leaving
+it in a not-quite-established state.  If the remote peer does a shutdown()
+at the right time, this can lead to a storm of EPOLLRDHUP events causing
+high CPU load.
+
+Fixes: acca4235c46f ("flow, tcp: Generalise TCP hash table to general flow hash table")
+Link: https://bugs.passt.top/show_bug.cgi?id=94
+Suggested-by: Stefano Brivio <sbrivio@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ flow.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/flow.c b/flow.c
+index 02631eb..a00e01d 100644
+--- a/flow.c
++++ b/flow.c
+@@ -697,7 +697,7 @@ static flow_sidx_t flowside_lookup(const struct ctx *c, uint8_t proto,
+ 	       !(FLOW_PROTO(&flow->f) == proto &&
+ 		 flow->f.pif[sidx.sidei] == pif &&
+ 		 flowside_eq(&flow->f.side[sidx.sidei], side)))
+-		b = (b + 1) % FLOW_HASH_SIZE;
++		b = mod_sub(b, 1, FLOW_HASH_SIZE);
+ 
+ 	return flow_hashtab[b];
+ }
+-- 
+2.47.1
+

@@ -12,7 +12,7 @@
 
 Name:		passt
 Version:	0^20240806.gee36266
-Release:	2%{?dist}
+Release:	6%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -21,6 +21,10 @@ Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
 Patch2:		0002-flow-Don-t-crash-if-guest-attempts-to-connect-to-por.patch
+Patch3:		0003-tcp-Acknowledge-keep-alive-segments-ignore-them-for-.patch
+Patch4:		0004-tcp_splice-Set-again-TCP_NODELAY-on-both-sides.patch
+Patch5:		0005-flow-Fix-incorrect-hash-probe-in-flowside_lookup.patch
+Patch6:		0006-tcp-Set-ACK-flag-on-all-RST-segments-even-for-client.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -127,6 +131,18 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 
 %changelog
+* Tue Jan 21 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-6
+- Resolves: RHEL-75645
+
+* Thu Jan 16 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-5
+- Resolves: RHEL-74301
+
+* Fri Jan 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-4
+- Resolves: RHEL-73251
+
+* Tue Nov 26 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-3
+- Resolves: RHEL-68948
+
 * Wed Aug 14 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-2
 - Resolves: RHEL-54268
 

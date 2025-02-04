@@ -1,0 +1,93 @@
+From 725acd111ba340122f2bb0601e373534eb4b5ed8 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 6 Jan 2025 10:10:29 +0100
+Subject: [PATCH] tcp_splice: Set (again) TCP_NODELAY on both sides
+
+In commit 7ecf69329787 ("pasta, tcp: Don't set TCP_CORK on spliced
+sockets") I just assumed that we wouldn't benefit from disabling
+Nagle's algorithm once we drop TCP_CORK (and its 200ms fixed delay).
+
+It turns out that with some patterns, such as a PostgreSQL server
+in a container receiving parameterised, short queries, for which pasta
+sees several short inbound messages (Parse, Bind, Describe, Execute
+and Sync commands getting each one their own packet, 5 to 49 bytes TCP
+payload each), we'll read them usually in two batches, and send them
+in matching batches, for example:
+
+  9165.2467:          pasta: epoll event on connected spliced TCP socket 117 (events: 0x00000001)
+  9165.2468:          Flow 0 (TCP connection (spliced)): 76 from read-side call
+  9165.2468:          Flow 0 (TCP connection (spliced)): 76 from write-side call (passed 524288)
+  9165.2469:          pasta: epoll event on connected spliced TCP socket 117 (events: 0x00000001)
+  9165.2470:          Flow 0 (TCP connection (spliced)): 15 from read-side call
+  9165.2470:          Flow 0 (TCP connection (spliced)): 15 from write-side call (passed 524288)
+  9165.2944:          pasta: epoll event on connected spliced TCP socket 118 (events: 0x00000001)
+
+and the kernel delivers the first one, waits for acknowledgement from
+the receiver, then delivers the second one. This adds very substantial
+and unnecessary delay. It's usually a fixed ~40ms between the two
+batches, which is clearly unacceptable for loopback connections.
+
+In this example, the delay is shown by the timestamp of the response
+from socket 118. The peer (server) doesn't actually take that long
+(less than a millisecond), but it takes that long for the kernel to
+deliver our request.
+
+To avoid batching and delays, disable Nagle's algorithm by setting
+TCP_NODELAY on both internal and external sockets: this way, we get
+one inbound packet for each original message, we transfer them right
+away, and the kernel delivers them to the process in the container as
+they are, without delay.
+
+We can do this safely as we don't care much about network utilisation
+when there's in fact pretty much no network (loopback connections).
+
+This is unfortunately not visible in the TCP request-response tests
+from the test suite because, with smaller messages (we use one byte),
+Nagle's algorithm doesn't even kick in. It's probably not trivial to
+implement a universal test covering this case.
+
+Fixes: 7ecf69329787 ("pasta, tcp: Don't set TCP_CORK on spliced sockets")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ tcp_splice.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/tcp_splice.c b/tcp_splice.c
+index 3a0f868..3a000ff 100644
+--- a/tcp_splice.c
++++ b/tcp_splice.c
+@@ -348,6 +348,7 @@ static int tcp_splice_connect(const struct ctx *c, struct tcp_splice_conn *conn)
+ 	uint8_t tgtpif = conn->f.pif[TGTSIDE];
+ 	union sockaddr_inany sa;
+ 	socklen_t sl;
++	int one = 1;
+ 
+ 	if (tgtpif == PIF_HOST)
+ 		conn->s[1] = tcp_conn_sock(c, af);
+@@ -359,12 +360,21 @@ static int tcp_splice_connect(const struct ctx *c, struct tcp_splice_conn *conn)
+ 	if (conn->s[1] < 0)
+ 		return -1;
+ 
+-	if (setsockopt(conn->s[1], SOL_TCP, TCP_QUICKACK,
+-		       &((int){ 1 }), sizeof(int))) {
++	if (setsockopt(conn->s[1], SOL_TCP, TCP_QUICKACK, &one, sizeof(one))) {
+ 		flow_trace(conn, "failed to set TCP_QUICKACK on socket %i",
+ 			   conn->s[1]);
+ 	}
+ 
++	if (setsockopt(conn->s[0], SOL_TCP, TCP_NODELAY, &one, sizeof(one))) {
++		flow_trace(conn, "failed to set TCP_NODELAY on socket %i",
++			   conn->s[0]);
++	}
++
++	if (setsockopt(conn->s[1], SOL_TCP, TCP_NODELAY, &one, sizeof(one))) {
++		flow_trace(conn, "failed to set TCP_NODELAY on socket %i",
++			   conn->s[1]);
++	}
++
+ 	pif_sockaddr(c, &sa, &sl, tgtpif, &tgt->eaddr, tgt->eport);
+ 
+ 	if (connect(conn->s[1], &sa.sa, sl)) {
+-- 
+2.47.1
+
