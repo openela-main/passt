@@ -1,0 +1,44 @@
+From 2d5181f7363a09b24b225b9d7c07f999a1f89e63 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 3 Feb 2025 08:19:16 +0100
+Subject: [PATCH] tcp: Don't reset outbound connection on SYN retries
+
+Reported by somebody on IRC: if the server has considerable latency,
+it might happen that the client retries sending SYN segments for the
+same flow while we're still in a TAP_SYN_RCVD, non-ESTABLISHED state.
+
+In that case, we should go with the blanket assumption that we need
+to reset the connection on any unexpected segment: RFC 9293 explicitly
+mentions this case in Figure 8: Recovery from Old Duplicate SYN,
+section 3.5. It doesn't make sense for us to set a specific sequence
+number, socket-side, but we should definitely wait and see.
+
+Ignoring the duplicate SYN segment should also be compatible with
+section 3.10.7.3. SYN-SENT STATE, which mentions updating sequences
+socket-side (which we can't do anyway), but certainly not reset the
+connection.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 722d347c1932f630a53ba05ea0270a651ed601b2)
+---
+ tcp.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/tcp.c b/tcp.c
+index bbc5687..babd02a 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -1962,6 +1962,9 @@ int tcp_tap_handler(struct ctx *c, uint8_t pif, sa_family_t af,
+ 
+ 	/* Establishing connection from tap */
+ 	if (conn->events & TAP_SYN_RCVD) {
++		if (th->syn && !th->ack && !th->fin)
++			return 1;	/* SYN retry: ignore and keep waiting */
++
+ 		if (!(conn->events & TAP_SYN_ACK_SENT))
+ 			goto reset;
+ 
+-- 
+2.47.1
+
