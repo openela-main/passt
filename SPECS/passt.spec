@@ -7,12 +7,12 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash ee36266a55478672ad2c5f4efbd6ca0bef3d37cd
+%global git_hash a1e48a02ff3550eb7875a7df6726086e9b3a1213
 %global selinuxtype targeted
 
 Name:		passt
-Version:	0^20240806.gee36266
-Release:	7%{?dist}
+Version:	0^20250217.ga1e48a0
+Release:	1%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -20,12 +20,6 @@ URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
-Patch2:		0002-flow-Don-t-crash-if-guest-attempts-to-connect-to-por.patch
-Patch3:		0003-tcp-Acknowledge-keep-alive-segments-ignore-them-for-.patch
-Patch4:		0004-tcp_splice-Set-again-TCP_NODELAY-on-both-sides.patch
-Patch5:		0005-flow-Fix-incorrect-hash-probe-in-flowside_lookup.patch
-Patch6:		0006-tcp-Set-ACK-flag-on-all-RST-segments-even-for-client.patch
-Patch7:		0007-tcp-Don-t-reset-outbound-connection-on-SYN-retries.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -52,7 +46,7 @@ Requires(preun): %{name}
 Requires(preun): policycoreutils
 
 %description selinux
-This package adds SELinux enforcement to passt(1) and pasta(1).
+This package adds SELinux enforcement to passt(1), pasta(1), passt-repair(1).
 
 %prep
 %autosetup -S git_am -n passt-%{git_hash}
@@ -90,6 +84,7 @@ make -f %{_datadir}/selinux/devel/Makefile
 install -p -m 644 -D passt.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/passt.pp
 install -p -m 644 -D passt.if %{buildroot}%{_datadir}/selinux/devel/include/distributed/passt.if
 install -p -m 644 -D pasta.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
+install -p -m 644 -D passt-repair.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 popd
 
 %pre selinux
@@ -98,11 +93,13 @@ popd
 %post selinux
 %selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp
 %selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
+%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %postun selinux
 if [ $1 -eq 0 ]; then
 	%selinux_modules_uninstall -s %{selinuxtype} passt
 	%selinux_modules_uninstall -s %{selinuxtype} pasta
+	%selinux_modules_uninstall -s %{selinuxtype} passt-repair
 fi
 
 %posttrans selinux
@@ -116,9 +113,11 @@ fi
 %{_bindir}/passt
 %{_bindir}/pasta
 %{_bindir}/qrap
+%{_bindir}/passt-repair
 %{_mandir}/man1/passt.1*
 %{_mandir}/man1/pasta.1*
 %{_mandir}/man1/qrap.1*
+%{_mandir}/man1/passt-repair.1*
 %ifarch x86_64
 %{_bindir}/passt.avx2
 %{_mandir}/man1/passt.avx2.1*
@@ -130,22 +129,20 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp
 %{_datadir}/selinux/devel/include/distributed/passt.if
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
+%{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
-* Wed Mar 12 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-7
-- Resolves: RHEL-83155
+* Mon Feb 17 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-1
+- Resolves: RHEL-79787
 
-* Tue Jan 21 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-6
-- Resolves: RHEL-75645
+* Wed Jan 22 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250121.g4f2c8e7-3
+- Resolves: RHEL-75654
 
-* Thu Jan 16 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-5
-- Resolves: RHEL-74301
+* Tue Jan 21 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250121.g4f2c8e7-1
+- Resolves: RHEL-75654
 
-* Fri Jan 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-4
-- Resolves: RHEL-73251
-
-* Tue Nov 26 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-3
-- Resolves: RHEL-68948
+* Thu Nov 21 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20241121.g238c69f-1
+- Resolves: RHEL-65502
 
 * Wed Aug 14 2024 Stefano Brivio <sbrivio@redhat.com> - 0^20240806-gee36266-2
 - Resolves: RHEL-54268

@@ -24,29 +24,28 @@ Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
  2 files changed, 2 deletions(-)
 
 diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
-index facc2d1..de10f45 100644
+index c6cea34..131fadc 100644
 --- a/contrib/selinux/passt.te
 +++ b/contrib/selinux/passt.te
-@@ -93,7 +93,6 @@ allow syslogd_t self:cap_userns sys_ptrace;
+@@ -92,7 +92,6 @@ allow syslogd_t self:cap_userns sys_ptrace;
  allow passt_t self:process setcap;
  allow passt_t self:capability { sys_tty_config setpcap net_bind_service setuid setgid};
  allow passt_t self:cap_userns { setpcap sys_admin sys_ptrace };
 -allow passt_t self:user_namespace create;
  
- allow passt_t passwd_file_t:file read_file_perms;
- sssd_search_lib(passt_t)
+ auth_read_passwd(passt_t)
+ 
 diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
-index ed70c5f..3226e37 100644
+index 69be081..892edae 100644
 --- a/contrib/selinux/pasta.te
 +++ b/contrib/selinux/pasta.te
-@@ -113,7 +113,6 @@ init_daemon_domain(pasta_t, pasta_exec_t)
+@@ -110,7 +110,6 @@ init_daemon_domain(pasta_t, pasta_exec_t)
  
  allow pasta_t self:capability { setpcap net_bind_service sys_tty_config dac_read_search net_admin sys_resource setuid setgid };
  allow pasta_t self:cap_userns { setpcap sys_admin sys_ptrace net_admin net_bind_service };
 -allow pasta_t self:user_namespace create;
  
- allow pasta_t passwd_file_t:file read_file_perms;
- sssd_search_lib(pasta_t)
+ auth_read_passwd(pasta_t)
+ 
 -- 
 2.39.2
-
