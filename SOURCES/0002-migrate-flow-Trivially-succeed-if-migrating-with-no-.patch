@@ -1,0 +1,51 @@
+From 6c2c2f64f838097e1c4412fe3b4c65aec7d51345 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Thu, 27 Feb 2025 16:55:13 +1100
+Subject: [PATCH 2/9] migrate, flow: Trivially succeed if migrating with no
+ flows
+
+We could get a migration request when we have no active flows; or at least
+none that we need or are able to migrate.  In this case after sending or
+receiving the number of flows we continue to step through various lists.
+
+In the target case, this could include communication with passt-repair.  If
+passt-repair wasn't started that could cause further errors, but of course
+they shouldn't matter if we have nothing to repair.
+
+Make it more obvious that there's nothing to do and avoid such errors by
+short-circuiting flow_migrate_{source,target}() if there are no migratable
+flows.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ flow.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/flow.c b/flow.c
+index cc881e86..b187dff8 100644
+--- a/flow.c
++++ b/flow.c
+@@ -1019,6 +1019,9 @@ int flow_migrate_source(struct ctx *c, const struct migrate_stage *stage,
+ 
+ 	debug("Sending %u flows", ntohl(count));
+ 
++	if (!count)
++		return 0;
++
+ 	/* Dump and send information that can be stored in the flow table.
+ 	 *
+ 	 * Limited rollback options here: if we fail to transfer any data (that
+@@ -1088,6 +1091,9 @@ int flow_migrate_target(struct ctx *c, const struct migrate_stage *stage,
+ 	count = ntohl(count);
+ 	debug("Receiving %u flows", count);
+ 
++	if (!count)
++		return 0;
++
+ 	if ((rc = flow_migrate_repair_all(c, true)))
+ 		return -rc;
+ 
+-- 
+2.48.1
+

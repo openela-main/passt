@@ -1,0 +1,106 @@
+From dadf2aa2691976219b8272276860926427b97c04 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 2 Apr 2025 13:51:22 +1100
+Subject: [PATCH] migrate, tcp: bind() migrated sockets in repair mode
+
+Currently on a migration target, we create then immediately bind() new
+sockets for the TCP connections we're reconstructing.  Mostly, this works,
+since a socket() that is bound but hasn't had listen() or connect() called
+is essentially passive.  However, this bind() is subject to the usual
+address conflict checking.  In particular that means if we already have
+a listening socket on that port, we'll get an EADDRINUSE.  This will happen
+for every connection we try to migrate that was initiated from outside to
+the guest, since we necessarily created a listening socket for that case.
+
+We set SO_REUSEADDR on the socket in an attempt to avoid this, but that's
+not sufficient; even with SO_REUSEADDR address conflicts are still
+prohibited for listening sockets.  Of course once these incoming sockets
+are fully repaired and connect()ed they'll no longer conflict, but that
+doesn't help us if we fail at the bind().
+
+We can avoid this by not calling bind() until we're already in repair mode
+which suppresses this transient conflict.  Because of the batching of
+setting repair mode, to do that we need to move the bind to a step in
+tcp_flow_migrate_target_ext().
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+[dwg: Fix trivial conflict for RHEL backport]
+---
+ tcp.c | 38 +++++++++++++++++++++++++++-----------
+ 1 file changed, 27 insertions(+), 11 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 74141cee..8f5ebc14 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -3398,13 +3398,8 @@ fail:
+ int tcp_flow_repair_socket(struct ctx *c, struct tcp_tap_conn *conn)
+ {
+ 	sa_family_t af = CONN_V4(conn) ? AF_INET : AF_INET6;
+-	const struct flowside *sockside = HOSTFLOW(conn);
+-	union sockaddr_inany a;
+-	socklen_t sl;
+ 	int s, rc;
+ 
+-	pif_sockaddr(c, &a, &sl, PIF_HOST, &sockside->oaddr, sockside->oport);
+-
+ 	if ((conn->sock = socket(af, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
+ 				 IPPROTO_TCP)) < 0) {
+ 		rc = -errno;
+@@ -3418,12 +3413,6 @@ int tcp_flow_repair_socket(struct ctx *c, struct tcp_tap_conn *conn)
+ 
+ 	tcp_sock_set_nodelay(s);
+ 
+-	if (bind(s, &a.sa, sizeof(a))) {
+-		rc = -errno;
+-		err_perror("Failed to bind socket for migrated flow");
+-		goto err;
+-	}
+-
+ 	if ((rc = tcp_flow_repair_on(c, conn)))
+ 		goto err;
+ 
+@@ -3435,6 +3424,30 @@ err:
+ 	return rc;
+ }
+ 
++/**
++ * tcp_flow_repair_bind() - Bind socket in repair mode
++ * @c:		Execution context
++ * @conn:	Pointer to the TCP connection structure
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int tcp_flow_repair_bind(const struct ctx *c, struct tcp_tap_conn *conn)
++{
++	const struct flowside *sockside = HOSTFLOW(conn);
++	union sockaddr_inany a;
++	socklen_t sl;
++
++	pif_sockaddr(c, &a, &sl, PIF_HOST, &sockside->oaddr, sockside->oport);
++
++	if (bind(conn->sock, &a.sa, sizeof(a))) {
++		int rc = -errno;
++		flow_perror(conn, "Failed to bind socket for migrated flow");
++		return rc;
++	}
++
++	return 0;
++}
++
+ /**
+  * tcp_flow_repair_connect() - Connect socket in repair mode, then turn it off
+  * @c:		Execution context
+@@ -3599,6 +3612,9 @@ int tcp_flow_migrate_target_ext(struct ctx *c, union flow *flow, int fd)
+ 		/* We weren't able to create the socket, discard flow */
+ 		goto fail;
+ 
++	if (tcp_flow_repair_bind(c, conn))
++		goto fail;
++
+ 	if (tcp_flow_repair_timestamp(conn, &t))
+ 		goto fail;
+ 
+-- 
+2.49.0
+

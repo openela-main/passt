@@ -1,0 +1,80 @@
+From 3479b0cf35f35c1b9b7202a3ffea4a4e7d3c4702 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 5 Mar 2025 15:32:29 +1100
+Subject: [PATCH 8/9] tap: Consider IPv6 flow label when building packet
+ sequences
+
+To allow more batching, we group together related packets into "seqs" in
+the tap layer, before passing them to the L4 protocol layers.  Currently
+we consider the IP protocol, both IP addresses and also the L4 ports when
+grouping things into seqs.  We ignore the IPv6 flow label.
+
+We have some future cases where we want to consider the the flow label in
+the L4 code, which is awkward if we could be given a single batch with
+multiple labels.  Add the flow label to tap6_l4_t and group by it as well
+as the other criteria.  In future we could possibly use the flow label
+_instead_ of peeking into the L4 header for the ports, but we don't do so
+for now.
+
+The guest should use the same flow label for all packets in a low, but if
+it doesn't this change won't break anything, it just means we'll batch
+things a bit sub-optimally.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ ip.h  | 1 -
+ tap.c | 4 ++++
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/ip.h b/ip.h
+index 55c0c793..e124b596 100644
+--- a/ip.h
++++ b/ip.h
+@@ -107,7 +107,6 @@ static inline void ip6_set_flow_lbl(struct ipv6hdr *ip6h, uint32_t flow)
+  *
+  * Return: flow label from @ip6h as an integer (<= 20 bits)
+  */
+-/* cppcheck-suppress unusedFunction */
+ static inline uint32_t ip6_get_flow_lbl(const struct ipv6hdr *ip6h)
+ {
+ 	return (ip6h->flow_lbl[0] & 0xf) << 16 |
+diff --git a/tap.c b/tap.c
+index d5219935..c5b36f1c 100644
+--- a/tap.c
++++ b/tap.c
+@@ -489,6 +489,7 @@ static struct tap4_l4_t {
+  * struct l4_seq6_t - Message sequence for one protocol handler call, IPv6
+  * @msgs:	Count of messages in sequence
+  * @protocol:	Protocol number
++ * @flow_lbl:	IPv6 flow label
+  * @source:	Source port
+  * @dest:	Destination port
+  * @saddr:	Source address
+@@ -497,6 +498,7 @@ static struct tap4_l4_t {
+  */
+ static struct tap6_l4_t {
+ 	uint8_t protocol;
++	uint32_t flow_lbl :20;
+ 
+ 	uint16_t source;
+ 	uint16_t dest;
+@@ -870,6 +872,7 @@ resume:
+ 		((seq)->protocol == (proto)                &&		\
+ 		 (seq)->source   == (uh)->source           &&		\
+ 		 (seq)->dest == (uh)->dest                 &&		\
++		 (seq)->flow_lbl == ip6_get_flow_lbl(ip6h) &&		\
+ 		 IN6_ARE_ADDR_EQUAL(&(seq)->saddr, saddr)  &&		\
+ 		 IN6_ARE_ADDR_EQUAL(&(seq)->daddr, daddr))
+ 
+@@ -878,6 +881,7 @@ resume:
+ 		(seq)->protocol	= (proto);				\
+ 		(seq)->source	= (uh)->source;				\
+ 		(seq)->dest	= (uh)->dest;				\
++		(seq)->flow_lbl	= ip6_get_flow_lbl(ip6h);		\
+ 		(seq)->saddr	= *saddr;				\
+ 		(seq)->daddr	= *daddr;				\
+ 	} while (0)
+-- 
+2.48.1
+
