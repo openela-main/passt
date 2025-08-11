@@ -1,0 +1,263 @@
+From e8beeee1eb545c84c4dfe3357fd0940cd1e320f9 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Thu, 17 Jul 2025 10:38:17 +0200
+Subject: [PATCH] treewide: By default, don't quit source after migration, keep
+ sockets open
+
+We are hitting an issue in the KubeVirt integration where some data is
+still sent to the source instance even after migration is complete. As
+we exit, the kernel closes our sockets and resets connections. The
+resulting RST segments are sent to peers, effectively terminating
+connections that were meanwhile migrated.
+
+At the moment, this is not done intentionally, but in the future
+KubeVirt might enable OVN-Kubernetes features where source and
+destination nodes are explicitly getting mirrored traffic for a while,
+in order to decrease migration downtime.
+
+By default, don't quit after migration is completed on the source: the
+previous behaviour can be enabled with the new, but deprecated,
+--migrate-exit option. After migration (as source), the -1 / --one-off
+option has no effect.
+
+Also, by default, keep migrated TCP sockets open (in repair mode) as
+long as we're running, and ignore events on any epoll descriptor
+representing data channels. The previous behaviour can be enabled with
+the new, equally deprecated, --migrate-no-linger option.
+
+By keeping sockets open, and not exiting, we prevent the kernel
+running on the source node to send out RST segments if further data
+reaches us.
+
+Reported-by: Nir Dothan <ndothan@redhat.com>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit a8782865c342eb2682cca292d5bf92b567344351)
+---
+ conf.c         | 22 ++++++++++++++++++++++
+ flow.c         |  2 +-
+ passt.1        | 29 +++++++++++++++++++++++++++++
+ passt.h        |  4 ++++
+ tcp.c          |  8 ++++++--
+ tcp_conn.h     |  2 +-
+ test/lib/setup |  4 ++--
+ vhost_user.c   |  9 +++++++--
+ 8 files changed, 72 insertions(+), 8 deletions(-)
+
+diff --git a/conf.c b/conf.c
+index 18017f5..52f95cf 100644
+--- a/conf.c
++++ b/conf.c
+@@ -823,6 +823,14 @@ static void usage(const char *name, FILE *f, int status)
+ 		FPRINTF(f,
+ 			"  --repair-path PATH	path for passt-repair(1)\n"
+ 			"    default: append '.repair' to UNIX domain path\n");
++		FPRINTF(f,
++			"  --migrate-exit	DEPRECATED:\n"
++			"			source quits after migration\n"
++			"    default: source keeps running after migration\n");
++		FPRINTF(f,
++			"  --migrate-no-linger	DEPRECATED:\n"
++			"			close sockets on migration\n"
++			"    default: keep sockets open, ignore events\n");
+ 	}
+ 
+ 	FPRINTF(f,
+@@ -1386,6 +1394,8 @@ void conf(struct ctx *c, int argc, char **argv)
+ 		{"socket-path",	required_argument,	NULL,		's' },
+ 		{"fqdn",	required_argument,	NULL,		27 },
+ 		{"repair-path",	required_argument,	NULL,		28 },
++		{"migrate-exit", no_argument,		NULL,		29 },
++		{"migrate-no-linger", no_argument,	NULL,		30 },
+ 		{ 0 },
+ 	};
+ 	const char *logname = (c->mode == MODE_PASTA) ? "pasta" : "passt";
+@@ -1594,6 +1604,18 @@ void conf(struct ctx *c, int argc, char **argv)
+ 			break;
+ 		case 28:
+ 			/* Handle this once we checked --vhost-user */
++			break;
++		case 29:
++			if (c->mode != MODE_VU)
++				die("--migrate-exit is for vhost-user mode only");
++			c->migrate_exit = true;
++
++			break;
++		case 30:
++			if (c->mode != MODE_VU)
++				die("--migrate-no-linger is for vhost-user mode only");
++			c->migrate_no_linger = true;
++
+ 			break;
+ 		case 'd':
+ 			c->debug = 1;
+diff --git a/flow.c b/flow.c
+index 3455945..8a0ca94 100644
+--- a/flow.c
++++ b/flow.c
+@@ -1084,7 +1084,7 @@ int flow_migrate_source(struct ctx *c, const struct migrate_stage *stage,
+ 	 * as EIO).
+ 	 */
+ 	foreach_established_tcp_flow(i, flow, FLOW_MAX) {
+-		rc = tcp_flow_migrate_source_ext(fd, i, &flow->tcp);
++		rc = tcp_flow_migrate_source_ext(c, fd, i, &flow->tcp);
+ 		if (rc) {
+ 			err("Extended data for flow %u: %s", i, strerror_(-rc));
+ 
+diff --git a/passt.1 b/passt.1
+index 60066c2..cef98b2 100644
+--- a/passt.1
++++ b/passt.1
+@@ -439,6 +439,30 @@ Default, for \-\-vhost-user mode only, is to append \fI.repair\fR to the path
+ chosen for the hypervisor UNIX domain socket. No socket is created if not in
+ \-\-vhost-user mode.
+ 
++.TP
++.BR \-\-migrate-exit (DEPRECATED)
++Exit after a completed migration as source. By default, \fBpasst\fR keeps
++running and the migrated guest can continue using its connection, or a new guest
++can connect.
++
++Note that this configuration option is \fBdeprecated\fR and will be removed in a
++future version. It is not expected to be of any use, and it simply reflects a
++legacy behaviour. If you have any use for this, refer to \fBREPORTING BUGS\fR
++below.
++
++.TP
++.BR \-\-migrate-no-linger (DEPRECATED)
++Close TCP sockets on the source instance once migration completes.
++
++By default, sockets are kept open, and events on data sockets are ignored, so
++that any further message reaching sockets after the source migrated is silently
++ignored, to avoid connection resets in case data is received after migration.
++
++Note that this configuration option is \fBdeprecated\fR and will be removed in a
++future version. It is not expected to be of any use, and it simply reflects a
++legacy behaviour. If you have any use for this, refer to \fBREPORTING BUGS\fR
++below.
++
+ .TP
+ .BR \-F ", " \-\-fd " " \fIFD
+ Pass a pre-opened, connected socket to \fBpasst\fR. Usually the socket is opened
+@@ -454,6 +478,11 @@ is closed.
+ Quit after handling a single client connection, that is, once the client closes
+ the socket, or once we get a socket error.
+ 
++\fBNote\fR: this option has no effect after \fBpasst\fR completes a migration as
++source, because, in that case, exiting would close sockets for active
++connections, which would in turn cause connection resets if any further data is
++received. See also the description of \fI\-\-migrate-no-linger\fR.
++
+ .TP
+ .BR \-t ", " \-\-tcp-ports " " \fIspec
+ Configure TCP port forwarding to guest. \fIspec\fR can be one of:
+diff --git a/passt.h b/passt.h
+index 1f0dab5..4705e3a 100644
+--- a/passt.h
++++ b/passt.h
+@@ -244,6 +244,8 @@ struct ip6_ctx {
+  * @device_state_fd:	Device state migration channel
+  * @device_state_result: Device state migration result
+  * @migrate_target:	Are we the target, on the next migration request?
++ * @migrate_no_linger:	Close sockets as we migrate them
++ * @migrate_exit:	Exit (on source) once migration is complete
+  */
+ struct ctx {
+ 	enum passt_modes mode;
+@@ -320,6 +322,8 @@ struct ctx {
+ 	int device_state_fd;
+ 	int device_state_result;
+ 	bool migrate_target;
++	bool migrate_no_linger;
++	bool migrate_exit;
+ };
+ 
+ void proto_update_l2_buf(const unsigned char *eth_d,
+diff --git a/tcp.c b/tcp.c
+index 8f5ebc1..efe5704 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -3268,13 +3268,14 @@ int tcp_flow_migrate_source(int fd, struct tcp_tap_conn *conn)
+ 
+ /**
+  * tcp_flow_migrate_source_ext() - Dump queues, close sockets, send final data
++ * @c:		Execution context
+  * @fd:		Descriptor for state migration
+  * @fidx:	Flow index
+  * @conn:	Pointer to the TCP connection structure
+  *
+  * Return: 0 on success, negative (not -EIO) on failure, -EIO on sending failure
+  */
+-int tcp_flow_migrate_source_ext(int fd, int fidx,
++int tcp_flow_migrate_source_ext(const struct ctx *c, int fd, int fidx,
+ 				const struct tcp_tap_conn *conn)
+ {
+ 	uint32_t peek_offset = conn->seq_to_tap - conn->seq_ack_from_tap;
+@@ -3320,7 +3321,10 @@ int tcp_flow_migrate_source_ext(int fd, int fidx,
+ 	if ((rc = tcp_flow_dump_seq(s, &t->seq_rcv)))
+ 		goto fail;
+ 
+-	close(s);
++	if (c->migrate_no_linger)
++		close(s);
++	else
++		epoll_del(c, s);
+ 
+ 	/* Adjustments unrelated to FIN segments: sequence numbers we dumped are
+ 	 * based on the end of the queues.
+diff --git a/tcp_conn.h b/tcp_conn.h
+index c6501f8..ff43b40 100644
+--- a/tcp_conn.h
++++ b/tcp_conn.h
+@@ -237,7 +237,7 @@ int tcp_flow_repair_off(struct ctx *c, const struct tcp_tap_conn *conn);
+ 
+ int tcp_flow_migrate_shrink_window(int fidx, const struct tcp_tap_conn *conn);
+ int tcp_flow_migrate_source(int fd, struct tcp_tap_conn *conn);
+-int tcp_flow_migrate_source_ext(int fd, int fidx,
++int tcp_flow_migrate_source_ext(const struct ctx *c, int fd, int fidx,
+ 				const struct tcp_tap_conn *conn);
+ 
+ int tcp_flow_migrate_target(struct ctx *c, int fd);
+diff --git a/test/lib/setup b/test/lib/setup
+index 575bc21..5994598 100755
+--- a/test/lib/setup
++++ b/test/lib/setup
+@@ -350,7 +350,7 @@ setup_migrate() {
+ 
+ 	sleep 1
+ 
+-	__opts="--vhost-user"
++	__opts="--vhost-user --migrate-exit --migrate-no-linger"
+ 	[ ${PCAP} -eq 1 ] && __opts="${__opts} -p ${LOGDIR}/passt_1.pcap"
+ 	[ ${DEBUG} -eq 1 ] && __opts="${__opts} -d"
+ 	[ ${TRACE} -eq 1 ] && __opts="${__opts} --trace"
+@@ -360,7 +360,7 @@ setup_migrate() {
+ 
+ 	context_run_bg passt_repair_1 "./passt-repair ${STATESETUP}/passt_1.socket.repair"
+ 
+-	__opts="--vhost-user"
++	__opts="--vhost-user --migrate-exit --migrate-no-linger"
+ 	[ ${PCAP} -eq 1 ] && __opts="${__opts} -p ${LOGDIR}/passt_2.pcap"
+ 	[ ${DEBUG} -eq 1 ] && __opts="${__opts} -d"
+ 	[ ${TRACE} -eq 1 ] && __opts="${__opts} --trace"
+diff --git a/vhost_user.c b/vhost_user.c
+index be1aa94..e2a37a9 100644
+--- a/vhost_user.c
++++ b/vhost_user.c
+@@ -1208,7 +1208,12 @@ void vu_control_handler(struct vu_dev *vdev, int fd, uint32_t events)
+ 	if (msg.hdr.request == VHOST_USER_CHECK_DEVICE_STATE &&
+ 	    vdev->context->device_state_result == 0 &&
+ 	    !vdev->context->migrate_target) {
+-		info("Migration complete, exiting");
+-		_exit(EXIT_SUCCESS);
++		if (vdev->context->migrate_exit) {
++			info("Migration complete, exiting");
++			_exit(EXIT_SUCCESS);
++		}
++
++		info("Migration complete");
++		vdev->context->one_off = false;
+ 	}
+ }
+-- 
+2.47.1
+
