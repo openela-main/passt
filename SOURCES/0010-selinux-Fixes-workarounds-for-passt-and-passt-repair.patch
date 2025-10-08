@@ -1,0 +1,151 @@
+From 631cfe67c02df0eb097f2b1ad6f23397e3c2246c Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 28 Feb 2025 01:14:01 +0100
+Subject: [PATCH 1/4] selinux: Fixes/workarounds for passt and passt-repair,
+ mostly for libvirt usage
+
+Here are a bunch of workarounds and a couple of fixes for libvirt
+usage which are rather hard to split into single logical patches
+as there appear to be some obscure dependencies between some of them:
+
+- passt-repair needs to have an exec_type typeattribute (otherwise
+  the policy for lsmd(1) causes a violation on getattr on its
+  executable) file, and that typeattribute just happened to be there
+  for passt as a result of init_daemon_domain(), but passt-repair
+  isn't a daemon, so we need an explicit corecmd_executable_file()
+
+- passt-repair needs a workaround, which I'll revisit once
+  https://github.com/fedora-selinux/selinux-policy/issues/2579 is
+  solved, for usage with libvirt: allow it to use qemu_var_run_t
+  and virt_var_run_t sockets
+
+- add 'bpf' and 'dac_read_search' capabilities for passt-repair:
+  they are needed (for whatever reason I didn't investigate) to
+  actually receive socket files via SCM_RIGHTS
+
+- passt needs further workarounds in the sense of
+  https://github.com/fedora-selinux/selinux-policy/issues/2579:
+  allow it to use map and use svirt_tmpfs_t (not just svirt_image_t):
+  it depends on where the libvirt guest image is
+
+- ...it also needs to map /dev/null if <access mode='shared'/> is
+  enabled in libvirt's XML for the memoryBacking object, for
+  vhost-user operation
+
+- and 'ioctl' on the TCP socket appears to be actually needed, on top
+  of 'getattr', to dump some socket parameters
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 87471731e6bb0b5df3a50277527caf3381b45ee4)
+---
+ contrib/selinux/passt-repair.te | 33 +++++++++++++++++++++++++++++++--
+ contrib/selinux/passt.te        |  9 +++++++--
+ 2 files changed, 38 insertions(+), 4 deletions(-)
+
+diff --git a/contrib/selinux/passt-repair.te b/contrib/selinux/passt-repair.te
+index e3ffbcd..f171be6 100644
+--- a/contrib/selinux/passt-repair.te
++++ b/contrib/selinux/passt-repair.te
+@@ -28,12 +28,22 @@ require {
+ 	type console_device_t;
+ 	type user_devpts_t;
+ 	type user_tmp_t;
++
++	# Workaround: passt-repair needs to needs to access socket files
++	# that passt, started by libvirt, might create under different
++	# labels, depending on whether passt is started as root or not.
++	#
++	# However, libvirt doesn't maintain its own policy, which makes
++	# updates particularly complicated. To avoid breakage in the short
++	# term, deal with that in passt's own policy.
++	type qemu_var_run_t;
++	type virt_var_run_t;
+ }
+ 
+ type passt_repair_t;
+ domain_type(passt_repair_t);
+ type passt_repair_exec_t;
+-files_type(passt_repair_exec_t);
++corecmd_executable_file(passt_repair_exec_t);
+ 
+ role unconfined_r types passt_repair_t;
+ 
+@@ -41,7 +51,8 @@ allow passt_repair_t passt_repair_exec_t:file { read execute execute_no_trans en
+ type_transition unconfined_t passt_repair_exec_t:process passt_repair_t;
+ allow unconfined_t passt_repair_t:process transition;
+ 
+-allow passt_repair_t self:capability { dac_override net_admin net_raw };
++allow passt_repair_t self:capability { dac_override dac_read_search net_admin net_raw };
++allow passt_repair_t self:capability2 bpf;
+ 
+ allow passt_repair_t console_device_t:chr_file { append open getattr read write ioctl };
+ allow passt_repair_t user_devpts_t:chr_file { append open getattr read write ioctl };
+@@ -50,9 +61,27 @@ allow passt_repair_t unconfined_t:unix_stream_socket { connectto read write };
+ allow passt_repair_t passt_t:unix_stream_socket { connectto read write };
+ allow passt_repair_t user_tmp_t:unix_stream_socket { connectto read write };
+ 
++allow passt_repair_t user_tmp_t:dir search;
++
+ allow passt_repair_t unconfined_t:sock_file { read write };
+ allow passt_repair_t passt_t:sock_file { read write };
+ allow passt_repair_t user_tmp_t:sock_file { read write };
+ 
+ allow passt_repair_t unconfined_t:tcp_socket { read setopt write };
+ allow passt_repair_t passt_t:tcp_socket { read setopt write };
++
++# Workaround: passt-repair needs to needs to access socket files
++# that passt, started by libvirt, might create under different
++# labels, depending on whether passt is started as root or not.
++#
++# However, libvirt doesn't maintain its own policy, which makes
++# updates particularly complicated. To avoid breakage in the short
++# term, deal with that in passt's own policy.
++allow passt_repair_t qemu_var_run_t:unix_stream_socket { connectto read write };
++allow passt_repair_t virt_var_run_t:unix_stream_socket { connectto read write };
++
++allow passt_repair_t qemu_var_run_t:dir search;
++allow passt_repair_t virt_var_run_t:dir search;
++
++allow passt_repair_t qemu_var_run_t:sock_file { read write };
++allow passt_repair_t virt_var_run_t:sock_file { read write };
+diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
+index cd1e5ee..a7e7727 100644
+--- a/contrib/selinux/passt.te
++++ b/contrib/selinux/passt.te
+@@ -29,6 +29,9 @@ require {
+ 	# particularly complicated. To avoid breakage in the short term,
+ 	# deal with it in passt's own policy.
+ 	type svirt_image_t;
++	type svirt_tmpfs_t;
++	type svirt_t;
++	type null_device_t;
+ 
+ 	class file { ioctl getattr setattr create read write unlink open relabelto execute execute_no_trans map };
+ 	class dir { search write add_name remove_name mounton };
+@@ -45,7 +48,7 @@ require {
+ 	type net_conf_t;
+ 	type proc_net_t;
+ 	type node_t;
+-	class tcp_socket { create accept listen name_bind name_connect getattr };
++	class tcp_socket { create accept listen name_bind name_connect getattr ioctl };
+ 	class udp_socket { create accept listen };
+ 	class icmp_socket { bind create name_bind node_bind setopt read write };
+ 	class sock_file { create unlink write };
+@@ -128,7 +131,7 @@ corenet_udp_sendrecv_all_ports(passt_t)
+ allow passt_t node_t:icmp_socket { name_bind node_bind };
+ allow passt_t port_t:icmp_socket name_bind;
+ 
+-allow passt_t self:tcp_socket { create getopt setopt connect bind listen accept shutdown read write getattr };
++allow passt_t self:tcp_socket { create getopt setopt connect bind listen accept shutdown read write getattr ioctl };
+ allow passt_t self:udp_socket { create getopt setopt connect bind read write };
+ allow passt_t self:icmp_socket { bind create setopt read write };
+ 
+@@ -142,3 +145,5 @@ allow passt_t unconfined_t:unix_stream_socket { read write };
+ # particularly complicated. To avoid breakage in the short term,
+ # deal with it in passt's own policy.
+ allow passt_t svirt_image_t:file { read write map };
++allow passt_t svirt_tmpfs_t:file { read write map };
++allow passt_t null_device_t:chr_file map;
+-- 
+2.47.1
+

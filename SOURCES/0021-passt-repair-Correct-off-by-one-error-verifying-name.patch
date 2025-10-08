@@ -1,0 +1,37 @@
+From 8fed562e63f3bf7ab2ddabaf1b31de49e03c4083 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 2 Apr 2025 15:28:04 +1100
+Subject: [PATCH] passt-repair: Correct off-by-one error verifying name
+
+passt-repair will generate an error if the name it gets from the kernel is
+too long or not NUL terminated.  Downstream testing has reported
+occasionally seeing this error in practice.
+
+In turns out there is a trivial off-by-one error in the check: ev->len is
+the length of the name, including terminating \0 characters, so to check
+for a \0 at the end of the buffer we need to check ev->name[len - 1] not
+ev->name[len].
+
+Fixes: 42a854a52 ("pasta, passt-repair: Support multiple events per...")
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+---
+ passt-repair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/passt-repair.c b/passt-repair.c
+index 86f02934..440c77ae 100644
+--- a/passt-repair.c
++++ b/passt-repair.c
+@@ -157,7 +157,7 @@ int main(int argc, char **argv)
+ 			}
+ 		} while (!found);
+ 
+-		if (ev->len > NAME_MAX + 1 || ev->name[ev->len] != '\0') {
++		if (ev->len > NAME_MAX + 1 || ev->name[ev->len - 1] != '\0') {
+ 			fprintf(stderr, "Invalid filename from inotify\n");
+ 			_exit(1);
+ 		}
+-- 
+2.49.0
+

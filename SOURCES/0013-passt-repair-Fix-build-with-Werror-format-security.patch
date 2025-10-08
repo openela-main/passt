@@ -1,0 +1,28 @@
+From 8f6ae98e30f555d28768653a5e0fc208a1748d50 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Tue, 18 Mar 2025 17:18:47 +0100
+Subject: [PATCH 4/4] passt-repair: Fix build with -Werror=format-security
+
+Fixes: 04701702471e ("passt-repair: Add directory watch")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 51f3c071a76bd20677e72b49007b822dca71e755)
+---
+ passt-repair.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/passt-repair.c b/passt-repair.c
+index 8bb3f00..120f7aa 100644
+--- a/passt-repair.c
++++ b/passt-repair.c
+@@ -150,7 +150,7 @@ int main(int argc, char **argv)
+ 			_exit(1);
+ 		}
+ 
+-		ret = snprintf(a.sun_path, sizeof(a.sun_path), path);
++		ret = snprintf(a.sun_path, sizeof(a.sun_path), "%s", path);
+ 		inotify_dir = true;
+ 	} else {
+ 		ret = snprintf(a.sun_path, sizeof(a.sun_path), "%s", argv[1]);
+-- 
+2.47.1
+

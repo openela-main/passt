@@ -1,0 +1,67 @@
+From 2887bf9c9a2be564478b259cd84d721e85a5129e Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 9 Apr 2025 16:35:41 +1000
+Subject: [PATCH 24/24] tcp_splice: Don't clobber errno before checking for
+ EAGAIN
+
+Like many places, tcp_splice_sock_handler() needs to handle EAGAIN
+specially, in this case for both of its splice() calls.  Unfortunately it
+tests for EAGAIN some time after those calls.  In between there has been
+at least a flow_trace() which could have clobbered errno.  Move the test on
+errno closer to the relevant system calls to avoid this problem.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 6693fa115824d198b7cde46c272514be194500a9)
+---
+ tcp_splice.c | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/tcp_splice.c b/tcp_splice.c
+index 7c3b56f..60455d6 100644
+--- a/tcp_splice.c
++++ b/tcp_splice.c
+@@ -526,13 +526,15 @@ retry:
+ 					 c->tcp.pipe_size,
+ 					 SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
+ 		while (readlen < 0 && errno == EINTR);
++
++		if (readlen < 0 && errno != EAGAIN)
++			goto close;
++
+ 		flow_trace(conn, "%zi from read-side call", readlen);
+-		if (readlen < 0) {
+-			if (errno != EAGAIN)
+-				goto close;
+-		} else if (!readlen) {
++
++		if (!readlen) {
+ 			eof = 1;
+-		} else {
++		} else if (readlen > 0) {
+ 			never_read = 0;
+ 
+ 			if (readlen >= (long)c->tcp.pipe_size * 90 / 100)
+@@ -549,6 +551,9 @@ retry:
+ 					 SPLICE_F_MOVE | more | SPLICE_F_NONBLOCK);
+ 		while (written < 0 && errno == EINTR);
+ 
++		if (written < 0 && errno != EAGAIN)
++			goto close;
++
+ 		flow_trace(conn, "%zi from write-side call (passed %zi)",
+ 			   written, c->tcp.pipe_size);
+ 
+@@ -580,9 +585,6 @@ retry:
+ 		conn->written[fromsidei] += written > 0 ? written : 0;
+ 
+ 		if (written < 0) {
+-			if (errno != EAGAIN)
+-				goto close;
+-
+ 			if (conn->read[fromsidei] == conn->written[fromsidei])
+ 				break;
+ 
+-- 
+2.47.1
+
