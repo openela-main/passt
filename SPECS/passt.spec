@@ -12,7 +12,7 @@
 
 Name:		passt
 Version:	0^20250217.ga1e48a0
-Release:	5%{?dist}
+Release:	7%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -42,6 +42,8 @@ Patch21:	0021-passt-repair-Correct-off-by-one-error-verifying-name.patch
 Patch22:	0022-passt-repair-Ensure-that-read-buffer-is-NULL-termina.patch
 Patch23:	0023-tcp_splice-Don-t-double-count-bytes-read-on-EINTR.patch
 Patch24:	0024-tcp_splice-Don-t-clobber-errno-before-checking-for-E.patch
+Patch25:	0025-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
+Patch26:	0026-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -154,6 +156,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-7
+- Resolves: RHEL-123414 RHEL-123421
+
 * Thu Apr 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-5
 - Resolves: RHEL-83979 RHEL-84157 RHEL-86761
 
