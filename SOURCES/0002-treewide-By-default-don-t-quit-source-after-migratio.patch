@@ -1,4 +1,4 @@
-From e8beeee1eb545c84c4dfe3357fd0940cd1e320f9 Mon Sep 17 00:00:00 2001
+From b0b5ce0a76cf7fec0b00405732fd94e0b34e8d84 Mon Sep 17 00:00:00 2001
 From: Stefano Brivio <sbrivio@redhat.com>
 Date: Thu, 17 Jul 2025 10:38:17 +0200
 Subject: [PATCH] treewide: By default, don't quit source after migration, keep
@@ -37,17 +37,17 @@ Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
  flow.c         |  2 +-
  passt.1        | 29 +++++++++++++++++++++++++++++
  passt.h        |  4 ++++
- tcp.c          |  8 ++++++--
- tcp_conn.h     |  2 +-
+ tcp.c          |  9 +++++++--
+ tcp_conn.h     |  3 ++-
  test/lib/setup |  4 ++--
  vhost_user.c   |  9 +++++++--
- 8 files changed, 72 insertions(+), 8 deletions(-)
+ 8 files changed, 74 insertions(+), 8 deletions(-)
 
 diff --git a/conf.c b/conf.c
-index 18017f5..52f95cf 100644
+index a6d7e22..1295d89 100644
 --- a/conf.c
 +++ b/conf.c
-@@ -823,6 +823,14 @@ static void usage(const char *name, FILE *f, int status)
+@@ -864,6 +864,14 @@ static void usage(const char *name, FILE *f, int status)
  		FPRINTF(f,
  			"  --repair-path PATH	path for passt-repair(1)\n"
  			"    default: append '.repair' to UNIX domain path\n");
@@ -62,7 +62,7 @@ index 18017f5..52f95cf 100644
  	}
  
  	FPRINTF(f,
-@@ -1386,6 +1394,8 @@ void conf(struct ctx *c, int argc, char **argv)
+@@ -1468,6 +1476,8 @@ void conf(struct ctx *c, int argc, char **argv)
  		{"socket-path",	required_argument,	NULL,		's' },
  		{"fqdn",	required_argument,	NULL,		27 },
  		{"repair-path",	required_argument,	NULL,		28 },
@@ -70,11 +70,11 @@ index 18017f5..52f95cf 100644
 +		{"migrate-no-linger", no_argument,	NULL,		30 },
  		{ 0 },
  	};
- 	const char *logname = (c->mode == MODE_PASTA) ? "pasta" : "passt";
-@@ -1594,6 +1604,18 @@ void conf(struct ctx *c, int argc, char **argv)
- 			break;
- 		case 28:
- 			/* Handle this once we checked --vhost-user */
+ 	const char *optstring = "+dqfel:hs:F:I:p:P:m:a:n:M:g:i:o:D:S:H:461t:u:T:U:";
+@@ -1683,6 +1693,18 @@ void conf(struct ctx *c, int argc, char **argv)
+ 					   optarg))
+ 				die("Invalid passt-repair path: %s", optarg);
+ 
 +			break;
 +		case 29:
 +			if (c->mode != MODE_VU)
@@ -91,18 +91,18 @@ index 18017f5..52f95cf 100644
  		case 'd':
  			c->debug = 1;
 diff --git a/flow.c b/flow.c
-index 3455945..8a0ca94 100644
+index 6a5c8aa..a4b65ea 100644
 --- a/flow.c
 +++ b/flow.c
-@@ -1084,7 +1084,7 @@ int flow_migrate_source(struct ctx *c, const struct migrate_stage *stage,
+@@ -1089,7 +1089,7 @@ int flow_migrate_source(struct ctx *c, const struct migrate_stage *stage,
  	 * as EIO).
  	 */
- 	foreach_established_tcp_flow(i, flow, FLOW_MAX) {
--		rc = tcp_flow_migrate_source_ext(fd, i, &flow->tcp);
-+		rc = tcp_flow_migrate_source_ext(c, fd, i, &flow->tcp);
+ 	foreach_established_tcp_flow(flow) {
+-		rc = tcp_flow_migrate_source_ext(fd, &flow->tcp);
++		rc = tcp_flow_migrate_source_ext(c, fd, &flow->tcp);
  		if (rc) {
- 			err("Extended data for flow %u: %s", i, strerror_(-rc));
- 
+ 			flow_err(flow, "Can't send extended data: %s",
+ 				 strerror_(-rc));
 diff --git a/passt.1 b/passt.1
 index 60066c2..cef98b2 100644
 --- a/passt.1
@@ -151,10 +151,10 @@ index 60066c2..cef98b2 100644
  .BR \-t ", " \-\-tcp-ports " " \fIspec
  Configure TCP port forwarding to guest. \fIspec\fR can be one of:
 diff --git a/passt.h b/passt.h
-index 1f0dab5..4705e3a 100644
+index 8693794..4cfd6eb 100644
 --- a/passt.h
 +++ b/passt.h
-@@ -244,6 +244,8 @@ struct ip6_ctx {
+@@ -241,6 +241,8 @@ struct ip6_ctx {
   * @device_state_fd:	Device state migration channel
   * @device_state_result: Device state migration result
   * @migrate_target:	Are we the target, on the next migration request?
@@ -163,7 +163,7 @@ index 1f0dab5..4705e3a 100644
   */
  struct ctx {
  	enum passt_modes mode;
-@@ -320,6 +322,8 @@ struct ctx {
+@@ -318,6 +320,8 @@ struct ctx {
  	int device_state_fd;
  	int device_state_result;
  	bool migrate_target;
@@ -173,27 +173,27 @@ index 1f0dab5..4705e3a 100644
  
  void proto_update_l2_buf(const unsigned char *eth_d,
 diff --git a/tcp.c b/tcp.c
-index 8f5ebc1..efe5704 100644
+index 0ac298a..1b22f70 100644
 --- a/tcp.c
 +++ b/tcp.c
-@@ -3268,13 +3268,14 @@ int tcp_flow_migrate_source(int fd, struct tcp_tap_conn *conn)
+@@ -3284,12 +3284,14 @@ int tcp_flow_migrate_source(int fd, struct tcp_tap_conn *conn)
  
  /**
   * tcp_flow_migrate_source_ext() - Dump queues, close sockets, send final data
 + * @c:		Execution context
   * @fd:		Descriptor for state migration
-  * @fidx:	Flow index
   * @conn:	Pointer to the TCP connection structure
   *
   * Return: 0 on success, negative (not -EIO) on failure, -EIO on sending failure
   */
--int tcp_flow_migrate_source_ext(int fd, int fidx,
-+int tcp_flow_migrate_source_ext(const struct ctx *c, int fd, int fidx,
- 				const struct tcp_tap_conn *conn)
+-int tcp_flow_migrate_source_ext(int fd, const struct tcp_tap_conn *conn)
++int tcp_flow_migrate_source_ext(const struct ctx *c,
++				int fd, const struct tcp_tap_conn *conn)
  {
  	uint32_t peek_offset = conn->seq_to_tap - conn->seq_ack_from_tap;
-@@ -3320,7 +3321,10 @@ int tcp_flow_migrate_source_ext(int fd, int fidx,
- 	if ((rc = tcp_flow_dump_seq(s, &t->seq_rcv)))
+ 	struct tcp_tap_transfer_ext *t = &migrate_ext[FLOW_IDX(conn)];
+@@ -3334,7 +3336,10 @@ int tcp_flow_migrate_source_ext(int fd, const struct tcp_tap_conn *conn)
+ 	if ((rc = tcp_flow_dump_seq(conn, &t->seq_rcv)))
  		goto fail;
  
 -	close(s);
@@ -205,18 +205,19 @@ index 8f5ebc1..efe5704 100644
  	/* Adjustments unrelated to FIN segments: sequence numbers we dumped are
  	 * based on the end of the queues.
 diff --git a/tcp_conn.h b/tcp_conn.h
-index c6501f8..ff43b40 100644
+index 35d813d..38b5c54 100644
 --- a/tcp_conn.h
 +++ b/tcp_conn.h
-@@ -237,7 +237,7 @@ int tcp_flow_repair_off(struct ctx *c, const struct tcp_tap_conn *conn);
+@@ -236,7 +236,8 @@ int tcp_flow_repair_on(struct ctx *c, const struct tcp_tap_conn *conn);
+ int tcp_flow_repair_off(struct ctx *c, const struct tcp_tap_conn *conn);
  
- int tcp_flow_migrate_shrink_window(int fidx, const struct tcp_tap_conn *conn);
  int tcp_flow_migrate_source(int fd, struct tcp_tap_conn *conn);
--int tcp_flow_migrate_source_ext(int fd, int fidx,
-+int tcp_flow_migrate_source_ext(const struct ctx *c, int fd, int fidx,
- 				const struct tcp_tap_conn *conn);
+-int tcp_flow_migrate_source_ext(int fd, const struct tcp_tap_conn *conn);
++int tcp_flow_migrate_source_ext(const struct ctx *c, int fd,
++				const struct tcp_tap_conn *conn);
  
  int tcp_flow_migrate_target(struct ctx *c, int fd);
+ int tcp_flow_migrate_target_ext(struct ctx *c, struct tcp_tap_conn *conn, int fd);
 diff --git a/test/lib/setup b/test/lib/setup
 index 575bc21..5994598 100755
 --- a/test/lib/setup
@@ -240,7 +241,7 @@ index 575bc21..5994598 100755
  	[ ${DEBUG} -eq 1 ] && __opts="${__opts} -d"
  	[ ${TRACE} -eq 1 ] && __opts="${__opts} --trace"
 diff --git a/vhost_user.c b/vhost_user.c
-index be1aa94..e2a37a9 100644
+index 105f77a..c4d3a52 100644
 --- a/vhost_user.c
 +++ b/vhost_user.c
 @@ -1208,7 +1208,12 @@ void vu_control_handler(struct vu_dev *vdev, int fd, uint32_t events)

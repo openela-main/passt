@@ -7,12 +7,12 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash a1e48a02ff3550eb7875a7df6726086e9b3a1213
+%global git_hash 8ec134109eb136432a29bdf5a14f8b1fd4e46208
 %global selinuxtype targeted
 
 Name:		passt
-Version:	0^20250217.ga1e48a0
-Release:	13%{?dist}
+Version:	0^20250512.g8ec1341
+Release:	2%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -20,32 +20,7 @@ URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
-Patch2:		0002-migrate-flow-Trivially-succeed-if-migrating-with-no-.patch
-Patch3:		0003-migrate-flow-Don-t-attempt-to-migrate-TCP-flows-with.patch
-Patch4:		0004-tcp-Correct-error-code-handling-from-tcp_flow_repair.patch
-Patch5:		0005-tcp-Unconditionally-move-to-CLOSED-state-on-tcp_rst.patch
-Patch6:		0006-migrate-tcp-Don-t-flow_alloc_cancel-during-incoming-.patch
-Patch7:		0007-ip-Helpers-to-access-IPv6-flow-label.patch
-Patch8:		0008-tap-Consider-IPv6-flow-label-when-building-packet-se.patch
-Patch9:		0009-tcp-Send-RST-in-response-to-guest-packets-that-match.patch
-Patch10:	0010-selinux-Fixes-workarounds-for-passt-and-passt-repair.patch
-Patch11:	0011-passt-repair-Add-directory-watch.patch
-Patch12:	0012-flow-repair-Wait-for-a-short-while-for-passt-repair-.patch
-Patch13:	0013-passt-repair-Fix-build-with-Werror-format-security.patch
-Patch14:        0014-migrate-tcp-More-careful-marshalling-of-mss-paramete.patch
-Patch15:        0015-flow-Add-flow_perror-helper.patch
-Patch16:        0016-migrate-tcp-Migrate-RFC-7323-timestamp.patch
-Patch17:        0017-migrate-Bump-migration-version-number.patch
-Patch18:	0018-tcp-Flush-socket-before-checking-for-more-data-in-ac.patch
-Patch19:	0019-pasta-passt-repair-Support-multiple-events-per-read-.patch
-Patch20:	0020-migrate-tcp-bind-migrated-sockets-in-repair-mode.patch
-Patch21:	0021-passt-repair-Correct-off-by-one-error-verifying-name.patch
-Patch22:	0022-passt-repair-Ensure-that-read-buffer-is-NULL-termina.patch
-Patch23:	0023-tcp_splice-Don-t-double-count-bytes-read-on-EINTR.patch
-Patch24:	0024-tcp_splice-Don-t-clobber-errno-before-checking-for-E.patch
-Patch25:	0025-treewide-By-default-don-t-quit-source-after-migratio.patch
-Patch26:	0026-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
-Patch27:	0027-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
+Patch2:		0002-treewide-By-default-don-t-quit-source-after-migratio.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -158,40 +133,14 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
-* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-13
-- Resolves: RHEL-123412 RHEL-123418
+* Tue Jul 29 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-2
+- Resolves: RHEL-106326
 
-* Wed Jul 30 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-10
-- Resolves: RHEL-106424
+* Tue May 13 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-1
+- Resolves: RHEL-84283
 
-* Thu Apr 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-9
-- Resolves: RHEL-86759
-
-* Thu Apr 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-8
-- Resolves: RHEL-83978
-
-* Wed Apr 2 2025 David Gibson <dgibson@redhat.com> - 0^20250217.ga1e48a0-7
-- Original fix for RHEL-84156 still leaves inbound connections broken.  Bring in
-  another fix.
-- Last fix for RHEL-83978 introduced a different off-by-one error, fix again.
-- Resolves: RHEL-84156
-- Resolves: RHEL-83978
-
-* Tue Apr 1 2025 David Gibson <dgibson@redhat.com> - 0^20250217.ga1e48a0-6
-- Original fix for RHEL-83978 wasn't sufficient, we need the fix for upstream bug 119 as well.
-- Resolves: RHEL-83978
-
-* Thu Mar 20 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-5
-- Resolves: RHEL-84247
-
-* Wed Mar 19 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-4
-- Resolves: RHEL-84156
-
-* Tue Mar 18 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-3
-- Resolves: RHEL-83978
-
-* Tue Mar 11 2025 David Gibson <dgibson@redhat.com> - 0^20250217.ga1e48a0-2
-- Resolves: RHEL-82211
+* Thu Mar 20 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250320.g32f6212-1
+- Resolves: RHEL-84283
 
 * Mon Feb 17 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250217.ga1e48a0-1
 - Resolves: RHEL-79787
