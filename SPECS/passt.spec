@@ -12,7 +12,7 @@
 
 Name:		passt
 Version:	0^20250512.g8ec1341
-Release:	2%{?dist}
+Release:	4%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -20,6 +20,8 @@ URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-treewide-By-default-don-t-quit-source-after-migratio.patch
+Patch2:		0002-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
+Patch3:		0003-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -132,6 +134,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-4
+- Resolves: RHEL-123415 RHEL-123424
+
 * Tue Jul 29 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-2
 - Resolves: RHEL-106425
 
