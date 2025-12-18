@@ -1,0 +1,48 @@
+From bd90a820852ff8966aeb83231c29e48849db3493 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 29 Aug 2025 22:11:31 +0200
+Subject: [PATCH 3/4] tcp: Cast operands of sequence comparison macros to
+ uint32_t before using them
+
+Otherwise, passing signed types causes automatic promotion of the
+result of the subtractions as well, which is not what we want, as
+these macros rely on unsigned 32-bit arithmetic.
+
+The next patch introduces a ssize_t operand for SEQ_LE, illustrating
+the issue.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Tested-by: Paul Holzinger <pholzing@redhat.com>
+Reviewed-by: Jon Maloy <jmaloy@redhat.com>
+(cherry picked from commit 660cd6907e14a41ad9bc77d317140c70ab416fce)
+---
+ tcp_internal.h | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/tcp_internal.h b/tcp_internal.h
+index 36c6533..c80ba40 100644
+--- a/tcp_internal.h
++++ b/tcp_internal.h
+@@ -18,10 +18,14 @@
+ 						   sizeof(struct ipv6hdr), \
+ 						   sizeof(uint32_t))
+ 
+-#define SEQ_LE(a, b)			((b) - (a) < MAX_WINDOW)
+-#define SEQ_LT(a, b)			((b) - (a) - 1 < MAX_WINDOW)
+-#define SEQ_GE(a, b)			((a) - (b) < MAX_WINDOW)
+-#define SEQ_GT(a, b)			((a) - (b) - 1 < MAX_WINDOW)
++#define SEQ_LE(a, b)			\
++	((uint32_t)(b) - (uint32_t)(a) < MAX_WINDOW)
++#define SEQ_LT(a, b)			\
++	((uint32_t)(b) - (uint32_t)(a) - 1 < MAX_WINDOW)
++#define SEQ_GE(a, b)			\
++	((uint32_t)(a) - (uint32_t)(b) < MAX_WINDOW)
++#define SEQ_GT(a, b)			\
++	((uint32_t)(a) - (uint32_t)(b) - 1 < MAX_WINDOW)
+ 
+ #define FIN		(1 << 0)
+ #define SYN		(1 << 1)
+-- 
+2.47.1
+
