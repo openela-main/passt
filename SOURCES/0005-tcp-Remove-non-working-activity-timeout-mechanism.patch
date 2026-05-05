@@ -1,0 +1,80 @@
+From 34a346e3eb83b33bd6d62a57e0e990c5c698fe85 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 4 Feb 2026 21:41:34 +1000
+Subject: [PATCH 5/8] tcp: Remove non-working activity timeout mechanism
+
+This mechanism was intended to remove connections which have had no
+activity for two hours, even if they haven't closed or been reset
+internally.  It operated by setting the two hour timeout if there are
+no sooner TCP timeouts to schedule.
+
+However, when the timer fires, the way we detect the case of the activity
+timeout doesn't work: it resets the timer for another two hours, then
+checks if the old timeout was two hours.  But the old timeout returned
+by timerfd_settime() is not the original value of the timer, but the
+remaining time.  Since the timer has just fired it will essentially always
+be 0.
+
+For now, just remove the mechanism, disarming the timer entirely if there
+isn't another upcoming event.  We'll re-introduce some sort of activity
+timeout by a different means later.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit e48ce41a1ec2f05846fb66d3847c2c2b6448ca71)
+---
+ tcp.c | 24 +++---------------------
+ 1 file changed, 3 insertions(+), 21 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 17e99af..7a7ca24 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -197,9 +197,6 @@
+  *   TAP_FIN_ACKED), but no socket activity is detected from the socket within
+  *   this time, reset the connection
+  *
+- * - ACT_TIMEOUT, in the presence of any event: if no activity is detected on
+- *   either side, the connection is reset
+- *
+  * - ACK_INTERVAL elapsed after data segment received from tap without having
+  *   sent an ACK segment, or zero-sized window advertised to tap/guest (flag
+  *   ACK_TO_TAP_DUE): forcibly check if an ACK segment can be sent
+@@ -578,7 +575,9 @@ static void tcp_timer_ctl(const struct ctx *c, struct tcp_tap_conn *conn)
+ 	} else if (CONN_HAS(conn, SOCK_FIN_SENT | TAP_FIN_ACKED)) {
+ 		it.it_value.tv_sec = FIN_TIMEOUT;
+ 	} else {
+-		it.it_value.tv_sec = ACT_TIMEOUT;
++		/* Disarm */
++		it.it_value.tv_sec = 0;
++		it.it_value.tv_nsec = 0;
+ 	}
+ 
+ 	flow_dbg(conn, "timer expires in %llu.%03llus",
+@@ -2294,23 +2293,6 @@ void tcp_timer_handler(const struct ctx *c, union epoll_ref ref)
+ 				tcp_timer_ctl(c, conn);
+ 			}
+ 		}
+-	} else {
+-		struct itimerspec new = { { 0 }, { ACT_TIMEOUT, 0 } };
+-		struct itimerspec old = { { 0 }, { 0 } };
+-
+-		/* Activity timeout: if it was already set, reset the
+-		 * connection, otherwise, it was a left-over from ACK_TO_TAP_DUE
+-		 * or ACK_FROM_TAP_DUE, so just set the long timeout in that
+-		 * case. This avoids having to preemptively reset the timer on
+-		 * ~ACK_TO_TAP_DUE or ~ACK_FROM_TAP_DUE.
+-		 */
+-		if (timerfd_settime(conn->timer, 0, &new, &old))
+-			flow_perror(conn, "failed to set timer");
+-
+-		if (old.it_value.tv_sec == ACT_TIMEOUT) {
+-			flow_dbg(conn, "activity timeout");
+-			tcp_rst(c, conn);
+-		}
+ 	}
+ }
+ 
+-- 
+2.47.1
+

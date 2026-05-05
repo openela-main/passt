@@ -1,0 +1,181 @@
+From 479c464c767e655fad65b9bedc496570bb40c997 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 4 Feb 2026 21:41:35 +1000
+Subject: [PATCH 6/8] tcp: Re-introduce inactivity timeouts based on a clock
+ algorithm
+
+We previously had a mechanism to remove TCP connections which were
+inactive for 2 hours.  That was broken for a long time, due to poor
+interactions with the timerfd handling, so we removed it.
+
+Adding this long scale timer onto the timerfd handling, which mostly
+handles much shorter timeouts is tricky to reason about.  However, for the
+inactivity timeouts, we don't require precision.  Instead, we can use
+a 1-bit page replacement / "clock" algorithm.  Every INACTIVITY_INTERVAL
+(2 hours), a global timer marks every TCP connection as tentatively
+inactive.  That flag is cleared if we get any events, either tap side or
+socket side.
+
+If the inactive flag is still set when the next INACTIVITY_INTERVAL expires
+then the connection has been inactive for an extended period and we reset
+and close it.  In practice this means that connections will be removed
+after 2-4 hours of inactivity.
+
+This is not a true fix for bug 179, but it does mitigate the damage, by
+limiting the time that inactive connections will remain around,
+
+Link: https://bugs.passt.top/show_bug.cgi?id=179
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 1820103fbbf13df98257a3f5c3ba625de624b0b3)
+---
+ tcp.c      | 49 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ tcp.h      |  2 ++
+ tcp_conn.h |  3 +++
+ 3 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/tcp.c b/tcp.c
+index 7a7ca24..394fc35 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -201,6 +201,13 @@
+  *   sent an ACK segment, or zero-sized window advertised to tap/guest (flag
+  *   ACK_TO_TAP_DUE): forcibly check if an ACK segment can be sent
+  *
++ * We also use a global interval timer for an activity timeout which doesn't
++ * require precision:
++ *
++ * - INACTIVITY_INTERVAL: if a connection has had no activity for an entire
++ *   interval, close and reset it.  This means that idle connections (without
++ *   keepalives) will be removed between INACTIVITY_INTERVAL s and
++ *   2*INACTIVITY_INTERVAL s after the last activity.
+  *
+  * Summary of data flows (with ESTABLISHED event)
+  * ----------------------------------------------
+@@ -330,7 +337,8 @@ enum {
+ #define SYN_TIMEOUT			10		/* s */
+ #define ACK_TIMEOUT			2
+ #define FIN_TIMEOUT			60
+-#define ACT_TIMEOUT			7200
++
++#define INACTIVITY_INTERVAL		7200		/* s */
+ 
+ #define LOW_RTT_TABLE_SIZE		8
+ #define LOW_RTT_THRESHOLD		10 /* us */
+@@ -2000,6 +2008,8 @@ int tcp_tap_handler(const struct ctx *c, uint8_t pif, sa_family_t af,
+ 		return 1;
+ 	}
+ 
++	conn->inactive = false;
++
+ 	if (th->ack && !(conn->events & ESTABLISHED))
+ 		tcp_update_seqack_from_tap(c, conn, ntohl(th->ack_seq));
+ 
+@@ -2318,6 +2328,8 @@ void tcp_sock_handler(const struct ctx *c, union epoll_ref ref,
+ 		return;
+ 	}
+ 
++	conn->inactive = false;
++
+ 	if ((conn->events & TAP_FIN_SENT) && (events & EPOLLHUP)) {
+ 		conn_event(c, conn, CLOSED);
+ 		return;
+@@ -2696,6 +2708,7 @@ static void tcp_port_rebind(struct ctx *c, bool outbound)
+ 	}
+ }
+ 
++
+ /**
+  * tcp_port_rebind_outbound() - Rebind ports in namespace
+  * @arg:	Execution context
+@@ -2714,6 +2727,38 @@ static int tcp_port_rebind_outbound(void *arg)
+ 	return 0;
+ }
+ 
++/**
++ * tcp_inactivity() - Scan for and close long-inactive connections
++ * @:	Execution context
++ */
++static void tcp_inactivity(struct ctx *c, const struct timespec *now)
++{
++	union flow *flow;
++
++	if (now->tv_sec - c->tcp.inactivity_run < INACTIVITY_INTERVAL)
++		return;
++
++	debug("TCP inactivity scan");
++	c->tcp.inactivity_run = now->tv_sec;
++
++	flow_foreach(flow) {
++		struct tcp_tap_conn *conn = &flow->tcp;
++
++		if (flow->f.type != FLOW_TCP)
++			continue;
++
++		if (conn->inactive) {
++			/* No activity in this interval, reset */
++			flow_dbg(conn, "Inactive for at least %us, resetting",
++				 INACTIVITY_INTERVAL);
++			tcp_rst(c, conn);
++		}
++
++		/* Ready to check fot next interval */
++		conn->inactive = true;
++	}
++}
++
+ /**
+  * tcp_timer() - Periodic tasks: port detection, closed connections, pool refill
+  * @c:		Execution context
+@@ -2738,6 +2783,8 @@ void tcp_timer(struct ctx *c, const struct timespec *now)
+ 	tcp_sock_refill_init(c);
+ 	if (c->mode == MODE_PASTA)
+ 		tcp_splice_refill(c);
++
++	tcp_inactivity(c, now);
+ }
+ 
+ /**
+diff --git a/tcp.h b/tcp.h
+index 234a803..b75e9a7 100644
+--- a/tcp.h
++++ b/tcp.h
+@@ -59,12 +59,14 @@ union tcp_listen_epoll_ref {
+  * @fwd_out:		Port forwarding configuration for outbound packets
+  * @timer_run:		Timestamp of most recent timer run
+  * @pipe_size:		Size of pipes for spliced connections
++ * @inactivity_run:	Time we last scanned for inactive connections
+  */
+ struct tcp_ctx {
+ 	struct fwd_ports fwd_in;
+ 	struct fwd_ports fwd_out;
+ 	struct timespec timer_run;
+ 	size_t pipe_size;
++	time_t inactivity_run;
+ };
+ 
+ #endif /* TCP_H */
+diff --git a/tcp_conn.h b/tcp_conn.h
+index 35d813d..93f9440 100644
+--- a/tcp_conn.h
++++ b/tcp_conn.h
+@@ -17,6 +17,7 @@
+  * @ws_from_tap:	Window scaling factor advertised from tap/guest
+  * @ws_to_tap:		Window scaling factor advertised to tap/guest
+  * @tap_mss:		MSS advertised by tap/guest, rounded to 2 ^ TCP_MSS_BITS
++ * @inactive:		No activity within the current INACTIVITY_INTERVAL
+  * @sock:		Socket descriptor number
+  * @events:		Connection events, implying connection states
+  * @listening_sock:	Listening socket this socket was accept()ed from, or -1
+@@ -52,6 +53,8 @@ struct tcp_tap_conn {
+ #define MSS_SET(conn, mss)	(conn->tap_mss = (mss >> (16 - TCP_MSS_BITS)))
+ #define MSS_GET(conn)		(conn->tap_mss << (16 - TCP_MSS_BITS))
+ 
++	bool		inactive	:1;
++
+ 	int		sock		:FD_REF_BITS;
+ 
+ 	uint8_t		events;
+-- 
+2.47.1
+

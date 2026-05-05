@@ -12,7 +12,7 @@
 
 Name:		passt
 Version:	0^20250512.g8ec1341
-Release:	4%{?dist}
+Release:	5%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -22,6 +22,11 @@ Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 Patch1:		0001-treewide-By-default-don-t-quit-source-after-migratio.patch
 Patch2:		0002-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
 Patch3:		0003-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
+Patch4:		0004-tcp-Properly-remove-sockets-from-epoll-loop-when-con.patch
+Patch5:		0005-tcp-Remove-non-working-activity-timeout-mechanism.patch
+Patch6:		0006-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
+Patch7:		0007-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
+Patch8:		0008-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -134,6 +139,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Wed Apr 22 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-5
+- Resolves: RHEL-169974 RHEL-169634
+
 * Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-4
 - Resolves: RHEL-123415 RHEL-123424
 

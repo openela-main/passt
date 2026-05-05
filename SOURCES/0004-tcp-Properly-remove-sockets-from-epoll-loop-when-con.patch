@@ -1,0 +1,49 @@
+From a7d9ce6cacf8d62ca78fa98d469902c900659cb9 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Tue, 4 Nov 2025 16:40:43 +1100
+Subject: [PATCH 4/8] tcp: Properly remove sockets from epoll loop when
+ connection is closed
+
+Most of the handling for closing a TCP connectin is in conn_event_do() when
+it receives a 'CLOSED' event.  We specifically check for this case and,
+correctly, remove the connection from the flow hash table.  However, we
+also bypass the call tp tcp_epoll_ctl() which is not correct.  By skipping
+tcp_epoll_ctl() we skip it's specific handling of the CLOSED event, which
+includes removing the TCP socket from epoll.
+
+If we somehow get an event on such a stale socket, we'll get a stale flow
+reference.  That flow slot might have been re-used, leading to to a crash
+in conn_at_sidx().
+
+Fixes: b86afe3559c0 ("tcp: Don't defer hash table removal")
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 60ade6cae70dc48f7f777c38e7c70fc3696784c4)
+---
+ tcp.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 0ac298a..17e99af 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -681,12 +681,13 @@ void conn_event_do(const struct ctx *c, struct tcp_tap_conn *conn,
+ 		flow_dbg(conn, "%s",
+ 			 num == -1 	       ? "CLOSED" : tcp_event_str[num]);
+ 
+-	if (event == CLOSED)
+-		flow_hash_remove(c, TAP_SIDX(conn));
+-	else if ((event == TAP_FIN_RCVD) && !(conn->events & SOCK_FIN_RCVD))
++	if ((event == TAP_FIN_RCVD) && !(conn->events & SOCK_FIN_RCVD)) {
+ 		conn_flag(c, conn, ACTIVE_CLOSE);
+-	else
++	} else {
++		if (event == CLOSED)
++			flow_hash_remove(c, TAP_SIDX(conn));
+ 		tcp_epoll_ctl(c, conn);
++	}
+ 
+ 	if (CONN_HAS(conn, SOCK_FIN_SENT | TAP_FIN_ACKED))
+ 		tcp_timer_ctl(c, conn);
+-- 
+2.47.1
+
