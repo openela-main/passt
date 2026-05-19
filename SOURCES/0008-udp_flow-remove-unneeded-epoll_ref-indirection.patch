@@ -1,0 +1,48 @@
+From cbc536354eb5f2d6f19e3842c2ff5a3c2725b8ed Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 9 Jan 2026 17:54:35 +0100
+Subject: [PATCH 08/18] udp_flow: remove unneeded epoll_ref indirection
+
+The fref union was used to convert flow_sidx_t to uint32_t for
+assignment to ref.data.  This is unnecessary since epoll_ref already
+contains a flowside member of type flow_sidx_t, so we can assign
+directly.
+
+This aligns with how icmp.c and other callers assign flow_sidx_t to
+epoll_ref.
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit ab27852d0eebcd96d33c3699b44596a827b83bc6)
+---
+ udp_flow.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/udp_flow.c b/udp_flow.c
+index 8907f2f..0ba7880 100644
+--- a/udp_flow.c
++++ b/udp_flow.c
+@@ -74,10 +74,6 @@ static int udp_flow_sock(const struct ctx *c,
+ {
+ 	const struct flowside *side = &uflow->f.side[sidei];
+ 	uint8_t pif = uflow->f.pif[sidei];
+-	union {
+-		flow_sidx_t sidx;
+-		uint32_t data;
+-	} fref = { .sidx = FLOW_SIDX(uflow, sidei) };
+ 	union epoll_ref ref;
+ 	int rc;
+ 	int s;
+@@ -89,7 +85,7 @@ static int udp_flow_sock(const struct ctx *c,
+ 	}
+ 
+ 	ref.type = EPOLL_TYPE_UDP;
+-	ref.data = fref.data;
++	ref.flowside = FLOW_SIDX(uflow, sidei);
+ 	ref.fd = s;
+ 
+ 	flow_epollid_set(&uflow->f, EPOLLFD_ID_DEFAULT);
+-- 
+2.47.1
+

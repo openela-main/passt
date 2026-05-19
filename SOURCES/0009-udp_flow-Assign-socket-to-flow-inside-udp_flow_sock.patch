@@ -1,0 +1,47 @@
+From c552b6462b67dd45b8162fe8f4d177bdc724c703 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 9 Jan 2026 17:54:36 +0100
+Subject: [PATCH 09/18] udp_flow: Assign socket to flow inside udp_flow_sock()
+
+Move the assignment of uflow->s[sidei] from the caller (udp_flow_new())
+into udp_flow_sock() itself, placing it after the successful connect().
+
+This is a pure refactoring with no functional change.  The socket fd is
+now assigned within udp_flow_sock() where the socket is created, rather
+than requiring the caller to capture the return value.  On error paths,
+uflow->s[sidei] remains at its initialized value of -1 rather than being
+set to the negative error code, which is semantically cleaner (though
+functionally equivalent given the >= 0 check in udp_flow_close()).
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit e0fdfccc1c1a56c58a96d7fd6cc5d532cd780b6f)
+---
+ udp_flow.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/udp_flow.c b/udp_flow.c
+index 0ba7880..c4cf35c 100644
+--- a/udp_flow.c
++++ b/udp_flow.c
+@@ -105,6 +105,7 @@ static int udp_flow_sock(const struct ctx *c,
+ 		flow_dbg_perror(uflow, "Couldn't connect flow socket");
+ 		return rc;
+ 	}
++	uflow->s[sidei] = s;
+ 
+ 	/* It's possible, if unlikely, that we could receive some packets in
+ 	 * between the bind() and connect() which may or may not be for this
+@@ -159,7 +160,7 @@ static flow_sidx_t udp_flow_new(const struct ctx *c, union flow *flow,
+ 
+ 	flow_foreach_sidei(sidei) {
+ 		if (pif_is_socket(uflow->f.pif[sidei]))
+-			if ((uflow->s[sidei] = udp_flow_sock(c, uflow, sidei)) < 0)
++			if (udp_flow_sock(c, uflow, sidei) < 0)
+ 				goto cancel;
+ 	}
+ 
+-- 
+2.47.1
+

@@ -7,26 +7,35 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash 8ec134109eb136432a29bdf5a14f8b1fd4e46208
+%global git_hash d04c48032bcf724550d0b8f652fd00efcd2dfad0
 %global selinuxtype targeted
+%global selinux_policy_version 41.41
 
 Name:		passt
-Version:	0^20250512.g8ec1341
-Release:	5%{?dist}
+Version:	0^20251210.gd04c480
+Release:	4%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
 URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
-Patch1:		0001-treewide-By-default-don-t-quit-source-after-migratio.patch
-Patch2:		0002-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
-Patch3:		0003-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
-Patch4:		0004-tcp-Properly-remove-sockets-from-epoll-loop-when-con.patch
-Patch5:		0005-tcp-Remove-non-working-activity-timeout-mechanism.patch
-Patch6:		0006-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
-Patch7:		0007-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
-Patch8:		0008-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
+Patch3:		0003-tcp-Use-less-than-MSS-window-on-no-queued-data-or-no.patch
+Patch4:		0004-pasta-Warn-disable-matching-IP-version-if-not-suppor.patch
+Patch5:		0005-selinux-Enable-read-and-watch-permissions-on-netns-d.patch
+Patch6:		0006-selinux-Enable-open-permissions-on-netns-directory-o.patch
+Patch7:		0007-tcp-Fix-rounding-issue-in-check-for-approximating-wi.patch
+Patch8:		0008-udp_flow-remove-unneeded-epoll_ref-indirection.patch
+Patch9:		0009-udp_flow-Assign-socket-to-flow-inside-udp_flow_sock.patch
+Patch10:	0010-tcp_splice-Refactor-tcp_splice_conn_epoll_events-to-.patch
+Patch11:	0011-flow-Introduce-flow_epoll_set-to-centralize-epoll-op.patch
+Patch12:	0012-tcp-Properly-propagate-tap-side-RST-to-socket-side.patch
+Patch13:	0013-udp-Split-activity-timeouts-for-UDP-flows.patch
+Patch14:	0014-tcp-Remove-non-working-activity-timeout-mechanism.patch
+Patch15:	0015-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
+Patch16:	0016-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
+Patch17:	0017-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
+Patch18:	0018-tcp-Replace-send-buffer-boost-with-EPOLLOUT-monitori.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -42,15 +51,21 @@ for network namespaces: traffic is forwarded using a tap interface inside the
 namespace, without the need to create further interfaces on the host, hence not
 requiring any capabilities or privileges.
 
-%package    selinux
-BuildArch:  noarch
-Summary:    SELinux support for passt and pasta
-Requires:   %{name} = %{version}-%{release}
-Requires:   selinux-policy
-Requires(post): %{name}
-Requires(post): policycoreutils
-Requires(preun): %{name}
-Requires(preun): policycoreutils
+%package		    selinux
+BuildArch:		    noarch
+Summary:		    SELinux support for passt and pasta
+%if 0%{?fedora} > 43
+BuildRequires:      selinux-policy-devel
+%selinux_requires_min
+%else
+BuildRequires:      pkgconfig(systemd)
+Requires(post):     libselinux-utils
+Requires(post):     policycoreutils
+%endif
+Requires:		    container-selinux
+Requires:		    selinux-policy-%{selinuxtype}
+Requires(post):		container-selinux
+Requires(post):		selinux-policy-%{selinuxtype}
 
 %description selinux
 This package adds SELinux enforcement to passt(1), pasta(1), passt-repair(1).
@@ -98,15 +113,11 @@ popd
 %selinux_relabel_pre -s %{selinuxtype}
 
 %post selinux
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
+%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %postun selinux
 if [ $1 -eq 0 ]; then
-	%selinux_modules_uninstall -s %{selinuxtype} passt
-	%selinux_modules_uninstall -s %{selinuxtype} pasta
-	%selinux_modules_uninstall -s %{selinuxtype} passt-repair
+	%selinux_modules_uninstall -s %{selinuxtype} passt pasta passt-repair
 fi
 
 %posttrans selinux
@@ -139,11 +150,23 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
-* Wed Apr 22 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-5
-- Resolves: RHEL-169974 RHEL-169634
+* Tue Apr 21 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-4
+- Resolves: RHEL-169635 RHEL-169642 RHEL-169646
 
-* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-4
-- Resolves: RHEL-123415 RHEL-123424
+* Wed Feb 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-3
+- Resolves: RHEL-136495 RHEL-136314
+
+* Wed Dec 24 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-2
+- Resolves: RHEL-136314 RHEL-137440 RHEL-136495
+
+* Wed Dec 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-1
+- Resolves: RHEL-134949 RHEL-134953
+
+* Tue Dec  9 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251209.gc3f1ba7-1
+- Resolves: RHEL-134120
+
+* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-3
+- Resolves: RHEL-123425 RHEL-123683
 
 * Tue Jul 29 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-2
 - Resolves: RHEL-106425

@@ -1,0 +1,239 @@
+From 59c4113359af6d610e3f23f030a09ffa9011c9f8 Mon Sep 17 00:00:00 2001
+From: Yumei Huang <yuhuang@redhat.com>
+Date: Sat, 14 Feb 2026 15:31:36 +0800
+Subject: [PATCH 13/18] udp: Split activity timeouts for UDP flows
+
+Frequent DNS queries over UDP from a container or guest can result
+in many sockets shown in ss(8), typically one per flow. This is
+expected and harmless, but it can make the output of ss(8) look
+noisy and potentially concern users.
+
+This patch splits UDP flow timeouts into two, mirroring the Linux
+kernel, and sources the values from kernel parameters. The shorter
+timeout is applied to unidirectional flows and minimal bidirectional
+exchanges (single datagram and reply), while the longer timeout is
+used for bidirectional flows with multiple datagrams on either side.
+
+Link: https://bugs.passt.top/show_bug.cgi?id=197
+Suggested-by: Stefano Brivio <sbrivio@redhat.com>
+Signed-off-by: Yumei Huang <yuhuang@redhat.com>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit bebafa72a982784164a7d556bd860ec0ed1e02c7)
+---
+ contrib/apparmor/abstractions/passt |  4 ++++
+ udp.c                               | 34 +++++++++++++++++++++++++++--
+ udp.h                               |  4 ++++
+ udp_flow.c                          | 30 ++++++++++++++++++++-----
+ udp_flow.h                          |  4 ++++
+ 5 files changed, 69 insertions(+), 7 deletions(-)
+
+diff --git a/contrib/apparmor/abstractions/passt b/contrib/apparmor/abstractions/passt
+index 43fd63f..e8ed513 100644
+--- a/contrib/apparmor/abstractions/passt
++++ b/contrib/apparmor/abstractions/passt
+@@ -36,6 +36,10 @@
+ 
+   @{PROC}/sys/net/ipv4/ip_local_port_range r,	# fwd_probe_ephemeral()
+ 
++  # udp_get_timeout_params(), udp.c
++  @{PROC}/sys/net/netfilter/nf_conntrack_udp_timeout r,
++  @{PROC}/sys/net/netfilter/nf_conntrack_udp_timeout_stream r,
++
+   network netlink raw,				# nl_sock_init_do(), netlink.c
+ 
+   network inet stream,				# tcp.c
+diff --git a/udp.c b/udp.c
+index 08bec50..11c3ecc 100644
+--- a/udp.c
++++ b/udp.c
+@@ -26,7 +26,10 @@
+  *
+  * We track pseudo-connections of this type as flow table entries of type
+  * FLOW_UDP.  We store the time of the last traffic on the flow in uflow->ts,
+- * and let the flow expire if there is no traffic for UDP_CONN_TIMEOUT seconds.
++ * and let the flow expire if there is no traffic for UDP_TIMEOUT seconds for
++ * unidirectional flows and flows with only one datagram and one reply, or
++ * UDP_TIMEOUT_STREAM seconds for bidirectional flows with more than one
++ * datagram on either side.
+  *
+  * NOTE: This won't handle multicast protocols, or some protocols with different
+  * port usage.  We'll need specific logic if we want to handle those.
+@@ -118,6 +121,13 @@
+ 
+ #define UDP_MAX_FRAMES		32  /* max # of frames to receive at once */
+ 
++#define UDP_TIMEOUT	"/proc/sys/net/netfilter/nf_conntrack_udp_timeout"
++#define UDP_TIMEOUT_STREAM	\
++	"/proc/sys/net/netfilter/nf_conntrack_udp_timeout_stream"
++
++#define UDP_TIMEOUT_DEFAULT		30	/* s */
++#define UDP_TIMEOUT_STREAM_DEFAULT	120	/* s */
++
+ /* Maximum UDP data to be returned in ICMP messages */
+ #define ICMP4_MAX_DLEN 8
+ #define ICMP6_MAX_DLEN (IPV6_MIN_MTU			\
+@@ -966,7 +976,7 @@ void udp_sock_handler(const struct ctx *c, union epoll_ref ref,
+ 		int s = ref.fd;
+ 
+ 		flow_trace(uflow, "Received data on reply socket");
+-		uflow->ts = now->tv_sec;
++		udp_flow_activity(uflow, !tosidx.sidei, now);
+ 
+ 		if (pif_is_socket(topif)) {
+ 			udp_sock_to_sock(c, ref.fd, n, tosidx);
+@@ -1301,6 +1311,24 @@ void udp_port_rebind_all(struct ctx *c)
+ 		udp_port_rebind(c, false);
+ }
+ 
++/*
++ * udp_get_timeout_params() - Get host kernel UDP timeout parameters
++ * @c:		Execution context
++ */
++static void udp_get_timeout_params(struct ctx *c)
++{
++	intmax_t v;
++
++	v = read_file_integer(UDP_TIMEOUT, UDP_TIMEOUT_DEFAULT);
++	c->udp.timeout = v;
++
++	v = read_file_integer(UDP_TIMEOUT_STREAM, UDP_TIMEOUT_STREAM_DEFAULT);
++	c->udp.stream_timeout = v;
++
++	debug("Using UDP timeout parameters, timeout: %d, stream_timeout: %d",
++	      c->udp.timeout, c->udp.stream_timeout);
++}
++
+ /**
+  * udp_init() - Initialise per-socket data, and sockets in namespace
+  * @c:		Execution context
+@@ -1311,6 +1339,8 @@ int udp_init(struct ctx *c)
+ {
+ 	ASSERT(!c->no_udp);
+ 
++	udp_get_timeout_params(c);
++
+ 	udp_iov_init(c);
+ 
+ 	if (c->mode == MODE_PASTA) {
+diff --git a/udp.h b/udp.h
+index 03e8dc5..618f258 100644
+--- a/udp.h
++++ b/udp.h
+@@ -42,11 +42,15 @@ union udp_listen_epoll_ref {
+  * @fwd_in:		Port forwarding configuration for inbound packets
+  * @fwd_out:		Port forwarding configuration for outbound packets
+  * @timer_run:		Timestamp of most recent timer run
++ * @timeout:		Timeout for unidirectional flows (in s)
++ * @stream_timeout:	Timeout for stream-like flows (in s)
+  */
+ struct udp_ctx {
+ 	struct fwd_ports fwd_in;
+ 	struct fwd_ports fwd_out;
+ 	struct timespec timer_run;
++	int timeout;
++	int stream_timeout;
+ };
+ 
+ #endif /* UDP_H */
+diff --git a/udp_flow.c b/udp_flow.c
+index 80b1543..4a8d4b6 100644
+--- a/udp_flow.c
++++ b/udp_flow.c
+@@ -17,8 +17,6 @@
+ #include "udp_internal.h"
+ #include "epoll_ctl.h"
+ 
+-#define UDP_CONN_TIMEOUT	180 /* s, timeout for ephemeral or local bind */
+-
+ /**
+  * udp_at_sidx() - Get UDP specific flow at given sidx
+  * @sidx:    Flow and side to retrieve
+@@ -152,6 +150,8 @@ static flow_sidx_t udp_flow_new(const struct ctx *c, union flow *flow,
+ 	uflow->ts = now->tv_sec;
+ 	uflow->s[INISIDE] = uflow->s[TGTSIDE] = -1;
+ 	uflow->ttl[INISIDE] = uflow->ttl[TGTSIDE] = 0;
++	uflow->activity[INISIDE] = 1;
++	uflow->activity[TGTSIDE] = 0;
+ 
+ 	flow_foreach_sidei(sidei) {
+ 		if (pif_is_socket(uflow->f.pif[sidei]))
+@@ -227,7 +227,7 @@ flow_sidx_t udp_flow_from_sock(const struct ctx *c, uint8_t pif,
+ 
+ 	sidx = flow_lookup_sa(c, IPPROTO_UDP, pif, s_in, dst, port);
+ 	if ((uflow = udp_at_sidx(sidx))) {
+-		uflow->ts = now->tv_sec;
++		udp_flow_activity(uflow, sidx.sidei, now);
+ 		return flow_sidx_opposite(sidx);
+ 	}
+ 
+@@ -284,7 +284,7 @@ flow_sidx_t udp_flow_from_tap(const struct ctx *c,
+ 	sidx = flow_lookup_af(c, IPPROTO_UDP, pif, af, saddr, daddr,
+ 			      srcport, dstport);
+ 	if ((uflow = udp_at_sidx(sidx))) {
+-		uflow->ts = now->tv_sec;
++		udp_flow_activity(uflow, sidx.sidei, now);
+ 		return flow_sidx_opposite(sidx);
+ 	}
+ 
+@@ -361,9 +361,29 @@ bool udp_flow_defer(const struct ctx *c, struct udp_flow *uflow,
+ bool udp_flow_timer(const struct ctx *c, struct udp_flow *uflow,
+ 		    const struct timespec *now)
+ {
+-	if (now->tv_sec - uflow->ts <= UDP_CONN_TIMEOUT)
++	int timeout = c->udp.timeout;
++
++	if (uflow->activity[TGTSIDE] &&
++	    (uflow->activity[INISIDE] > 1 || uflow->activity[TGTSIDE] > 1))
++		timeout = c->udp.stream_timeout;
++
++	if (now->tv_sec - uflow->ts <= timeout)
+ 		return false;
+ 
+ 	udp_flow_close(c, uflow);
+ 	return true;
+ }
++
++/**
++ * udp_flow_activity() - Track activity of a UDP flow
++ * @uflow:	UDP flow
++ * @sidei:	Side index of the flow (INISIDE or TGTSIDE)
++ * @now:	Current timestamp
++ */
++void udp_flow_activity(struct udp_flow *uflow, unsigned int sidei,
++		       const struct timespec *now)
++{
++	uflow->ts = now->tv_sec;
++	if (uflow->activity[sidei] < UINT8_MAX)
++		uflow->activity[sidei]++;
++}
+diff --git a/udp_flow.h b/udp_flow.h
+index 4c528e9..183a429 100644
+--- a/udp_flow.h
++++ b/udp_flow.h
+@@ -16,6 +16,7 @@
+  * @flush1:	@s[1] may have datagrams queued for other flows
+  * @ts:		Activity timestamp
+  * @s:		Socket fd (or -1) for each side of the flow
++ * @activity:	Packets seen from each side of the flow, up to UINT8_MAX
+  */
+ struct udp_flow {
+ 	/* Must be first element */
+@@ -29,6 +30,7 @@ struct udp_flow {
+ 
+ 	time_t ts;
+ 	int s[SIDES];
++	uint8_t activity[SIDES];
+ };
+ 
+ struct udp_flow *udp_at_sidx(flow_sidx_t sidx);
+@@ -46,5 +48,7 @@ bool udp_flow_defer(const struct ctx *c, struct udp_flow *uflow,
+ 		    const struct timespec *now);
+ bool udp_flow_timer(const struct ctx *c, struct udp_flow *uflow,
+ 		    const struct timespec *now);
++void udp_flow_activity(struct udp_flow *uflow, unsigned int sidei,
++		       const struct timespec *now);
+ 
+ #endif /* UDP_FLOW_H */
+-- 
+2.47.1
+

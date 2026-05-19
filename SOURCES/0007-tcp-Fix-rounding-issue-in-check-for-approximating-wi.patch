@@ -1,0 +1,74 @@
+From b9fbbca97e4ebf2358da3c0d971e1cc214cab632 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 9 Jan 2026 13:52:00 +0100
+Subject: [PATCH 7/7] tcp: Fix rounding issue in check for approximating window
+ to zero
+
+In general, we approximate the advertised window to zero if we would
+otherwise advertise less than a MSS worth, and the reasoning behind
+that is explained in cf1925fb7b77 ("tcp: Don't limit window to
+less-than-MSS values, use zero instead").
+
+Then, in commit b40f5cd8c8e1 ("tcp: Use less-than-MSS window on no
+queued data, or no data sent recently"), I introduced some conditions
+under which we won't do that, including a check on whether any data
+was sent recently.
+
+As an arbitrary but probably reasonable threshold, we consider data to
+have recently been sent if that occurred less than ten times the
+round-trip time (RTT) ago.
+
+The time elapsed since the last data transmission is reported by the
+kernel in milliseconds, in the tcpi_last_data_sent field of struct
+tcp_info, and the RTT is reported in microseconds instead, in
+tcpi_rtt.
+
+To avoid the risk of overflow in a simple way, for the purpose of this
+comparison, I converted tcpi_rtt to milliseconds first, but this means
+that the check will always be false (and we'll never approximate the
+window to zero) if the RTT is below one millisecond.
+
+This, in turn, reintroduces nasty delay issues in transfers in
+non-local connections which have however almost-local (low) latency.
+
+Given that we want to use ten times the RTT as an arbitrary "long
+enough" upper bound, round the RTT up while converting it to
+milliseconds.
+
+As an alternative, we could perform the comparison in microseconds,
+but we would need a slightly more complicated implementation to
+exclude overflows, and it's definitely not worth it given the nature
+of this threshold.
+
+Fixes: b40f5cd8c8e1 ("tcp: Use less-than-MSS window on no queued data, or no data sent recently")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 2be0e790804f99580b1c8a1781c49913440607f2)
+---
+ tcp.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tcp.c b/tcp.c
+index 23fcbc3..8f4f087 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -1180,6 +1180,7 @@ int tcp_update_seqack_wnd(const struct ctx *c, struct tcp_tap_conn *conn,
+ 	if ((conn->flags & LOCAL) || tcp_rtt_dst_low(conn)) {
+ 		new_wnd_to_tap = tinfo->tcpi_snd_wnd;
+ 	} else {
++		unsigned rtt_ms_ceiling = DIV_ROUND_UP(tinfo->tcpi_rtt, 1000);
+ 		uint32_t sendq;
+ 		int limit;
+ 
+@@ -1223,7 +1224,7 @@ int tcp_update_seqack_wnd(const struct ctx *c, struct tcp_tap_conn *conn,
+ 		 *   with pending data in the outbound queue
+ 		 */
+ 		if (limit < MSS_GET(conn) && sendq &&
+-		    tinfo->tcpi_last_data_sent < tinfo->tcpi_rtt / 1000 * 10)
++		    tinfo->tcpi_last_data_sent < rtt_ms_ceiling * 10)
+ 			limit = 0;
+ 
+ 		new_wnd_to_tap = MIN((int)tinfo->tcpi_snd_wnd, limit);
+-- 
+2.47.1
+

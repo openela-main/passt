@@ -1,0 +1,110 @@
+From b40f5cd8c8e16c6eceb1f26eb895527fda84068b Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Sat, 13 Dec 2025 14:19:13 +0100
+Subject: [PATCH] tcp: Use less-than-MSS window on no queued data, or no data
+ sent recently
+
+We limit the advertised window to guests and containers to the
+available length of the sending buffer, and if it's less than the MSS,
+since commit cf1925fb7b77 ("tcp: Don't limit window to less-than-MSS
+values, use zero instead"), we approximate that limit to zero.
+
+This way, we'll trigger a window update as soon as we realise that we
+can advertise a larger value, just like we do in all other cases where
+we advertise a zero-sized window.
+
+By doing that, we don't wait for the peer to send us data before we
+update the window. This matters because the guest or container might
+be trying to aggregate more data and won't send us anything at all if
+the advertised window is too small.
+
+However, this might be problematic in two situations:
+
+1. one, reported by Tyler, where the remote (receiving) peer
+   advertises a window that's smaller than what we usually get and
+   very close to the MSS, causing the kernel to give us a starting
+   size of the buffer that's less than the MSS we advertise to the
+   guest or container.
+
+   If this happens, we'll never advertise a non-zero window after
+   the handshake, and the container or guest will never send us any
+   data at all.
+
+   With a simple 'curl https://cloudflare.com/', we get, with default
+   TCP memory parameters, a 65535-byte window from the peer, and 46080
+   bytes of initial sending buffer from the kernel. But we advertised
+   a 65480-byte MSS, and we'll never actually receive the client
+   request.
+
+   This seems to be specific to Cloudflare for some reason, probably
+   deriving from a particular tuning of TCP parameters on their
+   servers.
+
+2. another one, hypothesised by David, where the peer might only be
+   willing to process (and acknowledge) data in batches.
+
+   We might have queued outbound data which is, at the same time, not
+   enough to fill one of these batches and be acknowledged and removed
+   from the sending queue, but enough to make our available buffer
+   smaller than the MSS, and the connection will hang.
+
+Take care of both cases by:
+
+a. not approximating the sending buffer to zero if we have no outboud
+   queued data at all, because in that case we don't expect the
+   available buffer to increase if we don't send any data, so there's
+   no point in waiting for it to grow larger than the MSS.
+
+   This fixes problem 1. above.
+
+b. also using the full sending buffer size if we haven't send data to
+   the socket for a while (reported by tcpi_last_data_sent). This part
+   was already suggested by David in:
+
+     https://archives.passt.top/passt-dev/aTZzgtcKWLb28zrf@zatzit/
+
+   and I'm now picking ten times the RTT as a somewhat arbitrary
+   threshold.
+
+   This is meant to take care of potential problem 2. above, but it
+   also happens to fix 1.
+
+Reported-by: Tyler Cloud <tcloud@redhat.com>
+Link: https://bugs.passt.top/show_bug.cgi?id=183
+Suggested-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+---
+ tcp.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/tcp.c b/tcp.c
+index 81bc114..b179e39 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -1211,8 +1211,21 @@ int tcp_update_seqack_wnd(const struct ctx *c, struct tcp_tap_conn *conn,
+ 		 * the MSS to zero, as we already have mechanisms in place to
+ 		 * force updates after the window becomes zero. This matches the
+ 		 * suggestion from RFC 813, Section 4.
++		 *
++		 * But don't do this if, either:
++		 *
++		 * - there's nothing in the outbound queue: the size of the
++		 *   sending buffer is limiting us, and it won't increase if we
++		 *   don't send data, so there's no point in waiting, or
++		 *
++		 * - we haven't sent data in a while (somewhat arbitrarily, ten
++		 *   times the RTT), as that might indicate that the receiver
++		 *   will only process data in batches that are large enough,
++		 *   but we won't send enough to fill one because we're stuck
++		 *   with pending data in the outbound queue
+ 		 */
+-		if (limit < MSS_GET(conn))
++		if (limit < MSS_GET(conn) && sendq &&
++		    tinfo->tcpi_last_data_sent < tinfo->tcpi_rtt / 1000 * 10)
+ 			limit = 0;
+ 
+ 		new_wnd_to_tap = MIN((int)tinfo->tcpi_snd_wnd, limit);
+-- 
+2.47.1
+

@@ -1,7 +1,7 @@
-From 34a346e3eb83b33bd6d62a57e0e990c5c698fe85 Mon Sep 17 00:00:00 2001
+From 0e93de89b6723dbacc391f4c975a3bdbc3529ef4 Mon Sep 17 00:00:00 2001
 From: David Gibson <david@gibson.dropbear.id.au>
 Date: Wed, 4 Feb 2026 21:41:34 +1000
-Subject: [PATCH 5/8] tcp: Remove non-working activity timeout mechanism
+Subject: [PATCH 14/18] tcp: Remove non-working activity timeout mechanism
 
 This mechanism was intended to remove connections which have had no
 activity for two hours, even if they haven't closed or been reset
@@ -27,20 +27,20 @@ Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
  1 file changed, 3 insertions(+), 21 deletions(-)
 
 diff --git a/tcp.c b/tcp.c
-index 17e99af..7a7ca24 100644
+index 602e810..de2ad38 100644
 --- a/tcp.c
 +++ b/tcp.c
-@@ -197,9 +197,6 @@
+@@ -199,9 +199,6 @@
   *   TAP_FIN_ACKED), but no socket activity is detected from the socket within
   *   this time, reset the connection
   *
 - * - ACT_TIMEOUT, in the presence of any event: if no activity is detected on
 - *   either side, the connection is reset
 - *
-  * - ACK_INTERVAL elapsed after data segment received from tap without having
+  * - RTT / 2 elapsed after data segment received from tap without having
   *   sent an ACK segment, or zero-sized window advertised to tap/guest (flag
-  *   ACK_TO_TAP_DUE): forcibly check if an ACK segment can be sent
-@@ -578,7 +575,9 @@ static void tcp_timer_ctl(const struct ctx *c, struct tcp_tap_conn *conn)
+  *   ACK_TO_TAP_DUE): forcibly check if an ACK segment can be sent.
+@@ -632,7 +629,9 @@ static void tcp_timer_ctl(const struct ctx *c, struct tcp_tap_conn *conn)
  	} else if (CONN_HAS(conn, SOCK_FIN_SENT | TAP_FIN_ACKED)) {
  		it.it_value.tv_sec = FIN_TIMEOUT;
  	} else {
@@ -50,10 +50,10 @@ index 17e99af..7a7ca24 100644
 +		it.it_value.tv_nsec = 0;
  	}
  
- 	flow_dbg(conn, "timer expires in %llu.%03llus",
-@@ -2294,23 +2293,6 @@ void tcp_timer_handler(const struct ctx *c, union epoll_ref ref)
- 				tcp_timer_ctl(c, conn);
- 			}
+ 	if (conn->flags & ACK_TO_TAP_DUE) {
+@@ -2628,23 +2627,6 @@ void tcp_timer_handler(const struct ctx *c, union epoll_ref ref)
+ 			tcp_data_from_sock(c, conn);
+ 			tcp_timer_ctl(c, conn);
  		}
 -	} else {
 -		struct itimerspec new = { { 0 }, { ACT_TIMEOUT, 0 } };
