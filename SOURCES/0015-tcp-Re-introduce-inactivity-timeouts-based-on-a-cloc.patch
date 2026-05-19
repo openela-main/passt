@@ -1,0 +1,191 @@
+From a2b1ad31a4d56a59e4d407263a22dee270973ea4 Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Wed, 4 Feb 2026 21:41:35 +1000
+Subject: [PATCH 15/18] tcp: Re-introduce inactivity timeouts based on a clock
+ algorithm
+
+We previously had a mechanism to remove TCP connections which were
+inactive for 2 hours.  That was broken for a long time, due to poor
+interactions with the timerfd handling, so we removed it.
+
+Adding this long scale timer onto the timerfd handling, which mostly
+handles much shorter timeouts is tricky to reason about.  However, for the
+inactivity timeouts, we don't require precision.  Instead, we can use
+a 1-bit page replacement / "clock" algorithm.  Every INACTIVITY_INTERVAL
+(2 hours), a global timer marks every TCP connection as tentatively
+inactive.  That flag is cleared if we get any events, either tap side or
+socket side.
+
+If the inactive flag is still set when the next INACTIVITY_INTERVAL expires
+then the connection has been inactive for an extended period and we reset
+and close it.  In practice this means that connections will be removed
+after 2-4 hours of inactivity.
+
+This is not a true fix for bug 179, but it does mitigate the damage, by
+limiting the time that inactive connections will remain around,
+
+Link: https://bugs.passt.top/show_bug.cgi?id=179
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 1820103fbbf13df98257a3f5c3ba625de624b0b3)
+---
+ tcp.c      | 52 ++++++++++++++++++++++++++++++++++++++++++++++++----
+ tcp.h      |  4 +++-
+ tcp_conn.h |  3 +++
+ 3 files changed, 54 insertions(+), 5 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index de2ad38..dd58550 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -207,6 +207,13 @@
+  *   TCP_INFO, with a representable range from RTT_STORE_MIN (100 us) to
+  *   RTT_STORE_MAX (3276.8 ms). The timeout value is clamped accordingly.
+  *
++ * We also use a global interval timer for an activity timeout which doesn't
++ * require precision:
++ *
++ * - INACTIVITY_INTERVAL: if a connection has had no activity for an entire
++ *   interval, close and reset it.  This means that idle connections (without
++ *   keepalives) will be removed between INACTIVITY_INTERVAL s and
++ *   2*INACTIVITY_INTERVAL s after the last activity.
+  *
+  * Summary of data flows (with ESTABLISHED event)
+  * ----------------------------------------------
+@@ -345,7 +352,8 @@ enum {
+ #define RTO_INIT			1		/* s, RFC 6298 */
+ #define RTO_INIT_AFTER_SYN_RETRIES	3		/* s, RFC 6298 */
+ #define FIN_TIMEOUT			60
+-#define ACT_TIMEOUT			7200
++
++#define INACTIVITY_INTERVAL		7200		/* s */
+ 
+ #define LOW_RTT_TABLE_SIZE		8
+ #define LOW_RTT_THRESHOLD		10 /* us */
+@@ -2294,6 +2302,8 @@ int tcp_tap_handler(const struct ctx *c, uint8_t pif, sa_family_t af,
+ 		return 1;
+ 	}
+ 
++	conn->inactive = false;
++
+ 	if (th->ack && !(conn->events & ESTABLISHED))
+ 		tcp_update_seqack_from_tap(c, conn, ntohl(th->ack_seq));
+ 
+@@ -2652,6 +2662,8 @@ void tcp_sock_handler(const struct ctx *c, union epoll_ref ref,
+ 		return;
+ 	}
+ 
++	conn->inactive = false;
++
+ 	if ((conn->events & TAP_FIN_ACKED) && (events & EPOLLHUP)) {
+ 		conn_event(c, conn, CLOSED);
+ 		return;
+@@ -3030,6 +3042,38 @@ static void tcp_port_rebind(struct ctx *c, bool outbound)
+ 	}
+ }
+ 
++/**
++ * tcp_inactivity() - Scan for and close long-inactive connections
++ * @:	Execution context
++ */
++static void tcp_inactivity(struct ctx *c, const struct timespec *now)
++{
++	union flow *flow;
++
++	if (now->tv_sec - c->tcp.inactivity_run < INACTIVITY_INTERVAL)
++		return;
++
++	debug("TCP inactivity scan");
++	c->tcp.inactivity_run = now->tv_sec;
++
++	flow_foreach(flow) {
++		struct tcp_tap_conn *conn = &flow->tcp;
++
++		if (flow->f.type != FLOW_TCP)
++			continue;
++
++		if (conn->inactive) {
++			/* No activity in this interval, reset */
++			flow_dbg(conn, "Inactive for at least %us, resetting",
++				 INACTIVITY_INTERVAL);
++			tcp_rst(c, conn);
++		}
++
++		/* Ready to check fot next interval */
++		conn->inactive = true;
++	}
++}
++
+ /**
+  * tcp_port_rebind_outbound() - Rebind ports in namespace
+  * @arg:	Execution context
+@@ -3068,13 +3112,13 @@ void tcp_port_rebind_all(struct ctx *c)
+  * @c:		Execution context
+  * @now:	Current timestamp
+  */
+-void tcp_timer(const struct ctx *c, const struct timespec *now)
++void tcp_timer(struct ctx *c, const struct timespec *now)
+ {
+-	(void)now;
+-
+ 	tcp_sock_refill_init(c);
+ 	if (c->mode == MODE_PASTA)
+ 		tcp_splice_refill(c);
++
++	tcp_inactivity(c, now);
+ }
+ 
+ /**
+diff --git a/tcp.h b/tcp.h
+index 3f21e75..37cfc5b 100644
+--- a/tcp.h
++++ b/tcp.h
+@@ -23,7 +23,7 @@ int tcp_sock_init(const struct ctx *c, uint8_t pif,
+ 		  in_port_t port);
+ int tcp_init(struct ctx *c);
+ void tcp_port_rebind_all(struct ctx *c);
+-void tcp_timer(const struct ctx *c, const struct timespec *now);
++void tcp_timer(struct ctx *c, const struct timespec *now);
+ void tcp_defer_handler(struct ctx *c);
+ 
+ void tcp_update_l2_buf(const unsigned char *eth_d);
+@@ -64,6 +64,7 @@ union tcp_listen_epoll_ref {
+  * @rto_max:		Maximum retry timeout (in s)
+  * @syn_retries:	SYN retries using exponential backoff timeout
+  * @syn_linear_timeouts: SYN retries before using exponential backoff timeout
++ * @inactivity_run:	Time we last scanned for inactive connections
+  */
+ struct tcp_ctx {
+ 	struct fwd_ports fwd_in;
+@@ -73,6 +74,7 @@ struct tcp_ctx {
+ 	int rto_max;
+ 	uint8_t syn_retries;
+ 	uint8_t syn_linear_timeouts;
++	time_t inactivity_run;
+ };
+ 
+ #endif /* TCP_H */
+diff --git a/tcp_conn.h b/tcp_conn.h
+index 9c6ff9e..2e70d39 100644
+--- a/tcp_conn.h
++++ b/tcp_conn.h
+@@ -16,6 +16,7 @@
+  * @ws_from_tap:	Window scaling factor advertised from tap/guest
+  * @ws_to_tap:		Window scaling factor advertised to tap/guest
+  * @tap_mss:		MSS advertised by tap/guest, rounded to 2 ^ TCP_MSS_BITS
++ * @inactive:		No activity within the current INACTIVITY_INTERVAL
+  * @sock:		Socket descriptor number
+  * @events:		Connection events, implying connection states
+  * @listening_sock:	Listening socket this socket was accept()ed from, or -1
+@@ -58,6 +59,8 @@ struct tcp_tap_conn {
+ 	(conn->rtt_exp = MIN(RTT_EXP_MAX, ilog2(MAX(1, rtt / RTT_STORE_MIN))))
+ #define RTT_GET(conn)			(RTT_STORE_MIN << conn->rtt_exp)
+ 
++	bool		inactive	:1;
++
+ 	int		sock		:FD_REF_BITS;
+ 
+ 	uint8_t		events;
+-- 
+2.47.1
+

@@ -13,7 +13,7 @@
 
 Name:		passt
 Version:	0^20251210.gd04c480
-Release:	3%{?dist}
+Release:	4%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -27,6 +27,17 @@ Patch4:		0004-pasta-Warn-disable-matching-IP-version-if-not-suppor.patch
 Patch5:		0005-selinux-Enable-read-and-watch-permissions-on-netns-d.patch
 Patch6:		0006-selinux-Enable-open-permissions-on-netns-directory-o.patch
 Patch7:		0007-tcp-Fix-rounding-issue-in-check-for-approximating-wi.patch
+Patch8:		0008-udp_flow-remove-unneeded-epoll_ref-indirection.patch
+Patch9:		0009-udp_flow-Assign-socket-to-flow-inside-udp_flow_sock.patch
+Patch10:	0010-tcp_splice-Refactor-tcp_splice_conn_epoll_events-to-.patch
+Patch11:	0011-flow-Introduce-flow_epoll_set-to-centralize-epoll-op.patch
+Patch12:	0012-tcp-Properly-propagate-tap-side-RST-to-socket-side.patch
+Patch13:	0013-udp-Split-activity-timeouts-for-UDP-flows.patch
+Patch14:	0014-tcp-Remove-non-working-activity-timeout-mechanism.patch
+Patch15:	0015-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
+Patch16:	0016-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
+Patch17:	0017-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
+Patch18:	0018-tcp-Replace-send-buffer-boost-with-EPOLLOUT-monitori.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -141,6 +152,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Tue Apr 21 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-4
+- Resolves: RHEL-169637 RHEL-169639 RHEL-169648
+
 * Wed Feb 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-3
 - Resolves: RHEL-137588 RHEL-136313
 

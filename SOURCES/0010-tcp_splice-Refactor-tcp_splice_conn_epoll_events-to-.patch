@@ -1,0 +1,94 @@
+From 766e42ea2c6f57547cfee4289ca27168149bb174 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 9 Jan 2026 17:54:37 +0100
+Subject: [PATCH 10/18] tcp_splice: Refactor tcp_splice_conn_epoll_events() to
+ per-side computation
+
+The function tcp_splice_conn_epoll_events() currently takes an array of
+struct epoll_event and fills in the .events field for both sides using
+flow_foreach_sidei() loops.
+
+This works, but the function is doing two conceptually separate things
+at once: computing events for side 0 and computing events for side 1.
+The OUT_WAIT handling is particularly subtle, as it has cross-side
+effects: when OUT_WAIT(sidei) is set, we add EPOLLOUT to ev[sidei] but
+also remove EPOLLIN from ev[!sidei].
+
+Refactor to make the function compute events for a single side at a
+time, taking sidei as a parameter and returning uint32_t. This makes
+the logic more focused and easier to follow. The cross-side effects of
+OUT_WAIT are preserved by checking both OUT_WAIT(sidei) and
+OUT_WAIT(!sidei) within each call.
+
+The caller tcp_splice_epoll_ctl() now invokes the function twice, once
+for each side, making the two-sided nature of the operation explicit.
+
+No functional change.
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit 23da651ab08e564b84c532f6f93b0817d2ae850f)
+---
+ tcp_splice.c | 33 ++++++++++++++-------------------
+ 1 file changed, 14 insertions(+), 19 deletions(-)
+
+diff --git a/tcp_splice.c b/tcp_splice.c
+index 4405224..bf4ff46 100644
+--- a/tcp_splice.c
++++ b/tcp_splice.c
+@@ -114,29 +114,23 @@ static struct tcp_splice_conn *conn_at_sidx(flow_sidx_t sidx)
+  * @events:	Connection event flags
+  * @ev:		Events to fill in, 0 is accepted socket, 1 is connecting socket
+  */
+-static void tcp_splice_conn_epoll_events(uint16_t events,
+-					 struct epoll_event ev[])
++static uint32_t tcp_splice_conn_epoll_events(uint16_t events, unsigned sidei)
+ {
+-	unsigned sidei;
+-
+-	flow_foreach_sidei(sidei)
+-		ev[sidei].events = 0;
++	uint32_t e = 0;
+ 
+ 	if (events & SPLICE_ESTABLISHED) {
+-		flow_foreach_sidei(sidei) {
+-			if (!(events & FIN_SENT(!sidei)))
+-				ev[sidei].events = EPOLLIN | EPOLLRDHUP;
+-		}
+-	} else if (events & SPLICE_CONNECT) {
+-		ev[1].events = EPOLLOUT;
++		if (!(events & FIN_SENT(!sidei)))
++			e = EPOLLIN | EPOLLRDHUP;
++	} else if (sidei == 1 && events & SPLICE_CONNECT) {
++		e = EPOLLOUT;
+ 	}
+ 
+-	flow_foreach_sidei(sidei) {
+-		if (events & OUT_WAIT(sidei)) {
+-			ev[sidei].events |= EPOLLOUT;
+-			ev[!sidei].events &= ~EPOLLIN;
+-		}
+-	}
++	if (events & OUT_WAIT(sidei))
++		e |= EPOLLOUT;
++	if (events & OUT_WAIT(!sidei))
++		e &= ~EPOLLIN;
++
++	return e;
+ }
+ 
+ /**
+@@ -161,7 +155,8 @@ static int tcp_splice_epoll_ctl(const struct ctx *c,
+ 	struct epoll_event ev[SIDES] = { { .data.u64 = ref[0].u64 },
+ 					 { .data.u64 = ref[1].u64 } };
+ 
+-	tcp_splice_conn_epoll_events(conn->events, ev);
++	ev[0].events = tcp_splice_conn_epoll_events(conn->events, 0);
++	ev[1].events = tcp_splice_conn_epoll_events(conn->events, 1);
+ 
+ 
+ 	if (epoll_ctl(epollfd, m, conn->s[0], &ev[0]) ||
+-- 
+2.47.1
+

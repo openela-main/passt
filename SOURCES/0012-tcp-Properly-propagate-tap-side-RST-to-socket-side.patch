@@ -1,0 +1,99 @@
+From 73a9bee3e1ffe447cb041c4826465a71730c2ecf Mon Sep 17 00:00:00 2001
+From: David Gibson <david@gibson.dropbear.id.au>
+Date: Tue, 27 Jan 2026 19:39:52 +1100
+Subject: [PATCH 12/18] tcp: Properly propagate tap-side RST to socket side
+
+When the guest sends a TCP RST, or on certain error conditions, we want to
+signal the abnormal termination of a TCP connection to the peer with an
+RST as well.  We attempt to do that by close()ing the socket.
+
+That doesn't work: a close() will usually send a FIN, rather than an RST.
+The standard method of forcing an RST on a socket is to set the SO_LINGER
+socket option with a 0 timeout, then close().
+
+Update the tcp_rst() path to do this, so it forces a socket side RST.
+Update the handling of a guest side RST to use the same path (minus
+sending a tap side RST) so that we properly propagate guest RSTs to the
+peer.
+
+Link: https://bugs.passt.top/show_bug.cgi?id=191
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit cce94e92fb3d2a90730c125f2bad32c9ed51da3f)
+---
+ tcp.c | 37 +++++++++++++++++++++++++++++++++----
+ 1 file changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/tcp.c b/tcp.c
+index 146d460..602e810 100644
+--- a/tcp.c
++++ b/tcp.c
+@@ -1417,7 +1417,34 @@ static int tcp_send_flag(const struct ctx *c, struct tcp_tap_conn *conn,
+ }
+ 
+ /**
+- * tcp_rst_do() - Reset a tap connection: send RST segment to tap, close socket
++ * tcp_sock_rst() - Close TCP connection forcing RST on socket side
++ * @c:		Execution context
++ * @conn:	Connection pointer
++ */
++static void tcp_sock_rst(const struct ctx *c, struct tcp_tap_conn *conn)
++{
++	const struct linger linger0 = {
++		.l_onoff = 1,
++		.l_linger = 0,
++	};
++
++	/* Force RST on socket to inform the peer
++	 *
++	 * We do this by setting SO_LINGER with 0 timeout, which means that
++	 * close() will send an RST (unless the connection is already closed in
++	 * both directions).
++	 */
++	if (setsockopt(conn->sock, SOL_SOCKET,
++		       SO_LINGER, &linger0, sizeof(linger0)) < 0) {
++		flow_dbg_perror(conn,
++				"SO_LINGER failed, may not send RST to peer");
++	}
++
++	conn_event(c, conn, CLOSED);
++}
++
++/**
++ * tcp_rst_do() - Reset a tap connection: send RST segment on both sides, close
+  * @c:		Execution context
+  * @conn:	Connection pointer
+  */
+@@ -1426,8 +1453,10 @@ void tcp_rst_do(const struct ctx *c, struct tcp_tap_conn *conn)
+ 	if (conn->events == CLOSED)
+ 		return;
+ 
++	/* Send RST on tap */
+ 	tcp_send_flag(c, conn, RST);
+-	conn_event(c, conn, CLOSED);
++
++	tcp_sock_rst(c, conn);
+ }
+ 
+ /**
+@@ -1898,7 +1927,7 @@ static int tcp_data_from_tap(const struct ctx *c, struct tcp_tap_conn *conn,
+ 			return -1;
+ 
+ 		if (th->rst) {
+-			conn_event(c, conn, CLOSED);
++			tcp_sock_rst(c, conn);
+ 			return 1;
+ 		}
+ 
+@@ -2262,7 +2291,7 @@ int tcp_tap_handler(const struct ctx *c, uint8_t pif, sa_family_t af,
+ 	flow_trace(conn, "packet length %zu from tap", l4len);
+ 
+ 	if (th->rst) {
+-		conn_event(c, conn, CLOSED);
++		tcp_sock_rst(c, conn);
+ 		return 1;
+ 	}
+ 
+-- 
+2.47.1
+
