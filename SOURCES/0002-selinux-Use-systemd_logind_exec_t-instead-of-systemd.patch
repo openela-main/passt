@@ -1,0 +1,41 @@
+From 2244df26b2cb63acb51a20485e1ca7ad0649b152 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 22 Dec 2025 21:48:32 -0500
+Subject: [PATCH] selinux: Use systemd_logind_exec_t instead of
+ systemd_user_runtimedir_exec_t
+
+On CentOS Stream 9, selinux-policy doesn't contain commit
+700b3622d575 ("Confine /usr/lib/systemd/systemd-user-runtime-dir"),
+so the file context of /usr/lib/systemd/systemd-user-runtime-dir is
+still systemd_logind_exec_t there.
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ contrib/selinux/pasta.te | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
+index 7e1e821..d29d6c4 100644
+--- a/contrib/selinux/pasta.te
++++ b/contrib/selinux/pasta.te
+@@ -98,7 +98,7 @@ require {
+ 	type container_runtime_t;
+ 	type container_var_run_t;
+ 	type container_t;
+-	type systemd_user_runtimedir_t;
++	type systemd_logind_exec_t;
+ }
+ 
+ type pasta_t;
+@@ -250,7 +250,7 @@ type_transition container_runtime_t user_tmp_t : dir ifconfig_var_run_t "rootles
+ type_transition container_runtime_t container_var_run_t : dir ifconfig_var_run_t "rootless-netns";
+ allow pasta_t ifconfig_var_run_t:dir { add_name open rmdir write };
+ allow pasta_t ifconfig_var_run_t:file { create open write };
+-allow systemd_user_runtimedir_t ifconfig_var_run_t:dir rmdir;
++allow systemd_logind_exec_t ifconfig_var_run_t:dir rmdir;
+ 
+ # Allow pasta to bind to any port
+ bool pasta_bind_all_ports true;
+-- 
+2.47.1
+

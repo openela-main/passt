@@ -1,6 +1,6 @@
-From 6977619743bbc602a865f79562b59a80921d6063 Mon Sep 17 00:00:00 2001
+From 7087adfbab35354f9def7edee87385b82416c722 Mon Sep 17 00:00:00 2001
 From: Stefano Brivio <sbrivio@redhat.com>
-Date: Mon, 21 Aug 2023 17:52:28 +0200
+Date: Mon, 8 Dec 2025 22:32:50 -0500
 Subject: [PATCH] selinux: Drop user_namespace create allow rules
 
 Those are incompatible with current el9 kernels. I introduced them
@@ -24,10 +24,10 @@ Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
  2 files changed, 2 deletions(-)
 
 diff --git a/contrib/selinux/passt.te b/contrib/selinux/passt.te
-index c6cea34..131fadc 100644
+index 6995df8..76d23e8 100644
 --- a/contrib/selinux/passt.te
 +++ b/contrib/selinux/passt.te
-@@ -92,7 +92,6 @@ allow syslogd_t self:cap_userns sys_ptrace;
+@@ -105,7 +105,6 @@ allow syslogd_t self:cap_userns sys_ptrace;
  allow passt_t self:process setcap;
  allow passt_t self:capability { sys_tty_config setpcap net_bind_service setuid setgid};
  allow passt_t self:cap_userns { setpcap sys_admin sys_ptrace };
@@ -36,16 +36,17 @@ index c6cea34..131fadc 100644
  auth_read_passwd(passt_t)
  
 diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
-index 69be081..892edae 100644
+index 95fe42a..7e1e821 100644
 --- a/contrib/selinux/pasta.te
 +++ b/contrib/selinux/pasta.te
-@@ -110,7 +110,6 @@ init_daemon_domain(pasta_t, pasta_exec_t)
- 
- allow pasta_t self:capability { setpcap net_bind_service sys_tty_config dac_read_search net_admin sys_resource setuid setgid };
- allow pasta_t self:cap_userns { setpcap sys_admin sys_ptrace net_admin net_bind_service };
+@@ -126,7 +126,6 @@ allow pasta_t self:cap_userns { setpcap sys_admin sys_ptrace net_admin net_bind_
+ # pasta only calls setuid and setgid with the current UID and GID, so this
+ # denial is harmless. See https://bugzilla.redhat.com/show_bug.cgi?id=2330512#c10
+ dontaudit pasta_t self:cap_userns { setgid setuid };
 -allow pasta_t self:user_namespace create;
  
  auth_read_passwd(pasta_t)
  
 -- 
-2.39.2
+2.47.1
+

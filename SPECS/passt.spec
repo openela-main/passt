@@ -7,12 +7,13 @@
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash 8ec134109eb136432a29bdf5a14f8b1fd4e46208
+%global git_hash d04c48032bcf724550d0b8f652fd00efcd2dfad0
 %global selinuxtype targeted
+%global selinux_policy_version 41.41
 
 Name:		passt
-Version:	0^20250512.g8ec1341
-Release:	4%{?dist}
+Version:	0^20251210.gd04c480
+Release:	3%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -20,9 +21,12 @@ URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
 
 Patch1:		0001-selinux-Drop-user_namespace-create-allow-rules.patch
-Patch2:		0002-treewide-By-default-don-t-quit-source-after-migratio.patch
-Patch3:		0003-tcp-Cast-operands-of-sequence-comparison-macros-to-u.patch
-Patch4:		0004-tcp-Don-t-consider-FIN-flags-with-mismatching-sequen.patch
+Patch2:		0002-selinux-Use-systemd_logind_exec_t-instead-of-systemd.patch
+Patch3:		0003-tcp-Use-less-than-MSS-window-on-no-queued-data-or-no.patch
+Patch4:		0004-pasta-Warn-disable-matching-IP-version-if-not-suppor.patch
+Patch5:		0005-selinux-Enable-read-and-watch-permissions-on-netns-d.patch
+Patch6:		0006-selinux-Enable-open-permissions-on-netns-directory-o.patch
+Patch7:		0007-tcp-Fix-rounding-issue-in-check-for-approximating-wi.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -38,15 +42,21 @@ for network namespaces: traffic is forwarded using a tap interface inside the
 namespace, without the need to create further interfaces on the host, hence not
 requiring any capabilities or privileges.
 
-%package    selinux
-BuildArch:  noarch
-Summary:    SELinux support for passt and pasta
-Requires:   %{name} = %{version}-%{release}
-Requires:   selinux-policy
-Requires(post): %{name}
-Requires(post): policycoreutils
-Requires(preun): %{name}
-Requires(preun): policycoreutils
+%package		    selinux
+BuildArch:		    noarch
+Summary:		    SELinux support for passt and pasta
+%if 0%{?fedora} > 43
+BuildRequires:      selinux-policy-devel
+%selinux_requires_min
+%else
+BuildRequires:      pkgconfig(systemd)
+Requires(post):     libselinux-utils
+Requires(post):     policycoreutils
+%endif
+Requires:		    container-selinux
+Requires:		    selinux-policy-%{selinuxtype}
+Requires(post):		container-selinux
+Requires(post):		selinux-policy-%{selinuxtype}
 
 %description selinux
 This package adds SELinux enforcement to passt(1), pasta(1), passt-repair(1).
@@ -94,15 +104,11 @@ popd
 %selinux_relabel_pre -s %{selinuxtype}
 
 %post selinux
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
+%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %postun selinux
 if [ $1 -eq 0 ]; then
-	%selinux_modules_uninstall -s %{selinuxtype} passt
-	%selinux_modules_uninstall -s %{selinuxtype} pasta
-	%selinux_modules_uninstall -s %{selinuxtype} passt-repair
+	%selinux_modules_uninstall -s %{selinuxtype} passt pasta passt-repair
 fi
 
 %posttrans selinux
@@ -135,8 +141,20 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
-* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-4
-- Resolves: RHEL-123413 RHEL-123419
+* Wed Feb 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-3
+- Resolves: RHEL-137588 RHEL-136313
+
+* Wed Dec 24 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-2
+- Resolves: RHEL-136313 RHEL-136461 RHEL-137439 RHEL-137588
+
+* Wed Dec 10 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-1
+- Resolves: RHEL-134942 RHEL-134943
+
+* Tue Dec  9 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20251209.gc3f1ba7-1
+- Resolves: RHEL-134119
+
+* Thu Oct 23 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-3
+- Resolves: RHEL-123376 RHEL-123438
 
 * Tue Jul 29 2025 Stefano Brivio <sbrivio@redhat.com> - 0^20250512.g8ec1341-2
 - Resolves: RHEL-106326

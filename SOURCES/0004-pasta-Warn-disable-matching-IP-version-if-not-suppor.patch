@@ -1,0 +1,90 @@
+From 75dcbc300bf09c3649823b12d30c4f24de7271d4 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Tue, 23 Dec 2025 13:39:17 +0100
+Subject: [PATCH] pasta: Warn, disable matching IP version if not supported, in
+ local mode
+
+...instead of exiting, but only if local mode is enabled, that is, if
+we couldn't find a template interface or if the user didn't specify
+one.
+
+With IPv4, we always try to set or copy an address, so check if that
+fails.
+
+With IPv6, in local mode, we rely on the link-local address that's
+automatically generated inside the target namespace, and only fail
+later, as we try to set up routes. Check if that fails, instead.
+
+Otherwise, we'll fail to start if IPv6 support is not built in or
+disabled by the kernel ("ipv6.disable=1" on the command line),
+because, in that case, we'll try to enable local mode by default, and
+then fail to set any address or route.
+
+It would probably be more elegant to check for IP version support in
+conf_ip4_local() and conf_ip6_local(), and not even try to enable
+connectivity for unsupported versions, but it looks less robust than
+trying and failing, as there might be other ways to disable a given
+IP version.
+
+Note that there's currently no way to disable IPv4 support on the
+kernel command line, that is, there's no such thing as an
+ipv4.disable boot parameter. But I guess that's due to be eventually
+implemented, one day, so let's cover that case as well, also for
+consistency.
+
+Reported-by: Iyan <iyanmv@gmail.com>
+Link: https://bugzilla.redhat.com/show_bug.cgi?id=2424192
+Fixes: 4ddd59bc6085 ("conf: Separate local mode for each IP version, don't enable disabled IP version")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+---
+ pasta.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/pasta.c b/pasta.c
+index c307b8a..0ddd6b0 100644
+--- a/pasta.c
++++ b/pasta.c
+@@ -348,6 +348,12 @@ void pasta_ns_conf(struct ctx *c)
+ 						 AF_INET);
+ 			}
+ 
++			if (c->ifi4 == -1 && rc == -ENOTSUP) {
++				warn("IPv4 not supported, disabling");
++				c->ifi4 = 0;
++				goto ipv4_done;
++			}
++
+ 			if (rc < 0) {
+ 				die("Couldn't set IPv4 address(es) in namespace: %s",
+ 				    strerror_(-rc));
+@@ -367,6 +373,7 @@ void pasta_ns_conf(struct ctx *c)
+ 				    strerror_(-rc));
+ 			}
+ 		}
++ipv4_done:
+ 
+ 		if (c->ifi6) {
+ 			rc = nl_addr_get_ll(nl_sock_ns, c->pasta_ifi,
+@@ -413,12 +420,19 @@ void pasta_ns_conf(struct ctx *c)
+ 						  AF_INET6);
+ 			}
+ 
++			if (c->ifi6 == -1 && rc == -ENOTSUP) {
++				warn("IPv6 not supported, disabling");
++				c->ifi6 = 0;
++				goto ipv6_done;
++			}
++
+ 			if (rc < 0) {
+ 				die("Couldn't set IPv6 route(s) in guest: %s",
+ 				    strerror_(-rc));
+ 			}
+ 		}
+ 	}
++ipv6_done:
+ 
+ 	proto_update_l2_buf(c->guest_mac);
+ }
+-- 
+2.47.1
+

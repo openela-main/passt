@@ -1,0 +1,68 @@
+From 6babaa8a88eb337e4b81aeff673fcebb28015f36 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Fri, 16 Jan 2026 16:48:46 +0100
+Subject: [PATCH 6/7] selinux: Enable open permissions on netns directory,
+ operations on container_var_run_t
+
+Tuomo reports two further SELinux denials after upgrading to a
+passt-selinux version that includes the transition to pasta_t for
+containers, one I could reproduce:
+
+  denied  { open } for  pid=3343050 comm="pasta.avx2" path="/run/user/1000/netns" dev="tmpfs" ino=51 scontext=unconfined_u:unconfined_r:pasta_t:s0-s0:c0.c1023 tcontext=unconfined_u:object_r:user_tmp_t:s0 tclass=dir permissive=1
+
+which I didn't take care of in the previous commit, d2c5133990a7
+("selinux: Enable read and watch permissions on netns directory as
+well"), as it didn't appear in my quick test. But I can make pasta use
+"open" on the network namespace entry by simply using it to make
+connections.
+
+So, for that, add "open" to the existing rule for user_tmp_t:dir.
+
+Then, another one I couldn't reproduce instead:
+
+  denied  { write } for  pid=3589324 comm="pasta.avx2" name="rootless-netns" dev="tmpfs" ino=36 scontext=unconfined_u:unconfined_r:pasta_t:s0-s0:c0.c1023 tcontext=unconfined_u:object_r:container_var_run_t:s0 tclass=dir permissive=0
+
+which, I think, comes from a specific combination of versions of
+container-selinux, Podman, and passt-selinux packages, which
+prevents the expected type transition on container_var_run_t unless
+restorecon is invoked manually, or until a reboot.
+
+Allowing the same permissions on container_var_run_t as we do on
+ifconfig_var_run_t is harmless, so do that to prevent this further
+denial.
+
+Reported-by: Tuomo Soini <tis@foobar.fi>
+Fixes: d2c5133990a7 ("selinux: Enable read and watch permissions on netns directory as well")
+Fixes: 7aeda16a7818 ("selinux: Transition to pasta_t in containers")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit a6d92ca82c9ea0b395aa56c568ee6b6e6d4ac81e)
+---
+ contrib/selinux/pasta.te | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
+index 22daa77..abeafa4 100644
+--- a/contrib/selinux/pasta.te
++++ b/contrib/selinux/pasta.te
+@@ -148,7 +148,7 @@ allow pasta_t root_t:dir mounton;
+ manage_files_pattern(pasta_t, pasta_pid_t, pasta_pid_t)
+ files_pid_filetrans(pasta_t, pasta_pid_t, file)
+ 
+-allow pasta_t user_tmp_t:dir { add_name read remove_name search watch write };
++allow pasta_t user_tmp_t:dir { add_name open read remove_name search watch write };
+ allow pasta_t user_tmp_t:fifo_file append;
+ allow pasta_t user_tmp_t:file { create open write };
+ allow pasta_t user_tmp_t:sock_file { create unlink };
+@@ -248,7 +248,9 @@ type_transition container_runtime_t user_tmp_t : dir ifconfig_var_run_t "netns";
+ type_transition container_runtime_t container_var_run_t : dir ifconfig_var_run_t "netns";
+ type_transition container_runtime_t user_tmp_t : dir ifconfig_var_run_t "rootless-netns";
+ type_transition container_runtime_t container_var_run_t : dir ifconfig_var_run_t "rootless-netns";
++allow pasta_t container_var_run_t:dir { add_name open rmdir write };
+ allow pasta_t ifconfig_var_run_t:dir { add_name open rmdir write };
++allow pasta_t container_var_run_t:file { create open write };
+ allow pasta_t ifconfig_var_run_t:file { create open write };
+ allow systemd_logind_exec_t ifconfig_var_run_t:dir rmdir;
+ 
+-- 
+2.47.1
+
