@@ -13,7 +13,7 @@
 
 Name:		passt
 Version:	0^20251210.gd04c480
-Release:	4%{?dist}
+Release:	5%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -38,6 +38,8 @@ Patch15:	0015-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
 Patch16:	0016-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
 Patch17:	0017-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
 Patch18:	0018-tcp-Replace-send-buffer-boost-with-EPOLLOUT-monitori.patch
+Patch19:	0019-udp_vu-Discard-datagrams-when-RX-virtqueue-is-not-us.patch
+Patch20:	0020-conf-util-Disable-IPv6-if-explicit-IPv6-socket-probe.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -152,6 +154,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Thu Jun 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-5
+- Resolves: RHEL-184106 RHEL-183990
+
 * Tue Apr 21 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-4
 - Resolves: RHEL-169637 RHEL-169639 RHEL-169648
 

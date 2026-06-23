@@ -1,0 +1,106 @@
+From 116e08082c23c8f00e608bd7c7825aa068401e46 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Wed, 7 Jan 2026 09:08:09 +0100
+Subject: [PATCH 19/20] udp_vu: Discard datagrams when RX virtqueue is not
+ usable
+
+During vhost-user device initialization, UDP datagrams may arrive on
+listening sockets before the guest has enabled the RX virtqueue.
+
+When this happens, udp_vu_sock_recv() returns 0 without consuming
+the datagram from the socket. The caller, udp_sock_fwd(), uses a
+while loop with udp_peek_addr() to process pending datagrams. Since
+the datagram remains in the socket buffer, udp_peek_addr() keeps
+returning data available, causing a busy loop with 100% CPU usage.
+
+To avoid that, we need to discard the data when the virtqueue is not
+ready. udp_buf_sock_to_tap() actually does the same as it reads data
+with udp_sock_recv() and if fd_tap is not initialized tap_send_frames()
+drops them.
+
+Fixes: 28997fcb29b5 ("vhost-user: add vhost-user")
+Link: https://bugs.passt.top/show_bug.cgi?id=185
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit edac476e268e4a0c5759a32fea9c720056de6315)
+---
+ udp_vu.c | 32 ++++++++++++++++++++++----------
+ 1 file changed, 22 insertions(+), 10 deletions(-)
+
+diff --git a/udp_vu.c b/udp_vu.c
+index c30dcf9..3774d53 100644
+--- a/udp_vu.c
++++ b/udp_vu.c
+@@ -65,7 +65,8 @@ static size_t udp_vu_hdrlen(bool v6)
+  * @v6:		Set for IPv6 connections
+  * @dlen:	Size of received data (output)
+  *
+- * Return: number of iov entries used to store the datagram
++ * Return: number of iov entries used to store the datagram, 0 if the datagram
++ *         was discarded because the virtqueue is not ready, -1 on error
+  */
+ static int udp_vu_sock_recv(const struct ctx *c, struct vu_virtq *vq, int s,
+ 			    bool v6, ssize_t *dlen)
+@@ -77,6 +78,15 @@ static int udp_vu_sock_recv(const struct ctx *c, struct vu_virtq *vq, int s,
+ 
+ 	ASSERT(!c->no_udp);
+ 
++	if (!vu_queue_enabled(vq) || !vu_queue_started(vq)) {
++		debug("Got UDP packet, but RX virtqueue not usable yet");
++
++		if (recvmsg(s, &msg, MSG_DONTWAIT) < 0)
++			debug_perror("Failed to discard datagram");
++
++		return 0;
++	}
++
+ 	/* compute L2 header length */
+ 	hdrlen = udp_vu_hdrlen(v6);
+ 
+@@ -87,7 +97,7 @@ static int udp_vu_sock_recv(const struct ctx *c, struct vu_virtq *vq, int s,
+ 			     sizeof(struct virtio_net_hdr_mrg_rxbuf),
+ 			     NULL);
+ 	if (iov_cnt == 0)
+-		return 0;
++		return -1;
+ 
+ 	/* reserve space for the headers */
+ 	ASSERT(iov_vu[0].iov_len >= MAX(hdrlen, ETH_ZLEN));
+@@ -101,7 +111,7 @@ static int udp_vu_sock_recv(const struct ctx *c, struct vu_virtq *vq, int s,
+ 	*dlen = recvmsg(s, &msg, 0);
+ 	if (*dlen < 0) {
+ 		vu_queue_rewind(vq, iov_cnt);
+-		return 0;
++		return -1;
+ 	}
+ 
+ 	/* restore the pointer to the headers address */
+@@ -216,15 +226,17 @@ void udp_vu_sock_to_tap(const struct ctx *c, int s, int n, flow_sidx_t tosidx)
+ 		int iov_used;
+ 
+ 		iov_used = udp_vu_sock_recv(c, vq, s, v6, &dlen);
+-		if (iov_used <= 0)
++		if (iov_used < 0)
+ 			break;
+ 
+-		udp_vu_prepare(c, toside, dlen);
+-		if (*c->pcap) {
+-			udp_vu_csum(toside, iov_used);
+-			pcap_iov(iov_vu, iov_used,
+-				 sizeof(struct virtio_net_hdr_mrg_rxbuf));
++		if (iov_used > 0) {
++			udp_vu_prepare(c, toside, dlen);
++			if (*c->pcap) {
++				udp_vu_csum(toside, iov_used);
++				pcap_iov(iov_vu, iov_used,
++					sizeof(struct virtio_net_hdr_mrg_rxbuf));
++			}
++			vu_flush(vdev, vq, elem, iov_used);
+ 		}
+-		vu_flush(vdev, vq, elem, iov_used);
+ 	}
+ }
+-- 
+2.47.1
+

@@ -1,0 +1,116 @@
+From e361a399f88c8cef26bd74df8259d45001d9aa44 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Mon, 8 Jun 2026 21:06:17 +0200
+Subject: [PATCH 20/20] conf, util: Disable IPv6 if explicit IPv6 socket probe
+ fails
+
+In https://bugs.passt.top/show_bug.cgi?id=188, I originally reported
+that if IPv6 is disabled in the kernel (for example via command line
+parameter ipv6.disable=1, or disabled in build configuration), and we
+attempt to forward any port, we'll exit right away after failing to
+set up dual-stack listening sockets.
+
+The original instance of that issue is now fixed for pasta by commit
+75dcbc300bf0 ("pasta: Warn, disable matching IP version if not
+supported, in local mode") together with the new implementation of
+the rule forwarding table, starting from commit b223bec48213 ("fwd,
+tcp, udp: Set up listening sockets based on forward table"), because
+we first parse forwarding options, then probe for IPv6 support in the
+target namespace (and disable IPv6 as a result), and finally bind
+sockets once we already know that IPv6 support is disabled.
+
+But we don't do that when invoked as passt, because we have no target
+namespace and hence no probing for IPv6 support whatsoever.
+
+Add IPv6 to the socket features we test in sock_probe_features(), and,
+if we fail to create an IPv6 socket for whatever reason (which might
+include security policies as well), disable IPv6 support altogether,
+so that we won't attempt to use dual-stack sockets for port forwarding
+either.
+
+Note that the probe comes without any sort of debug message, because
+at this point we haven't parsed the configuration yet, and we would
+therefore print that regardless of the selected logging level and
+other options, including --ipv4-only, which would be rather confusing.
+I doubt we'll miss this kind of message though, IPv6 support being
+disabled is anyway obvious from the initial configuration dump.
+
+Reported-by: Chi Cuong HA <ChiCuong.HA@amadeus.com>
+Reported-by: Romain Geissler <romain.geissler@amadeus.com>
+Link: https://bugs.passt.top/show_bug.cgi?id=188
+Fixes: 4ddd59bc6085 ("conf: Separate local mode for each IP version, don't enable disabled IP version")
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit e1a6d9ef626aa6dbcfeef97dbbab3bd69c35b4b1)
+---
+ conf.c  | 6 ++++++
+ passt.h | 2 ++
+ util.c  | 8 ++++++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/conf.c b/conf.c
+index fdc19e8..1af7753 100644
+--- a/conf.c
++++ b/conf.c
+@@ -1515,6 +1515,9 @@ void conf(struct ctx *c, int argc, char **argv)
+ 	uid_t uid;
+ 	gid_t gid;
+ 
++	if (c->no_ipv6)
++		v4_only = true;
++
+ 	if (c->mode == MODE_PASTA) {
+ 		c->no_dhcp_dns = c->no_dhcp_dns_search = 1;
+ 		fwd_default = FWD_AUTO;
+@@ -1919,6 +1922,9 @@ void conf(struct ctx *c, int argc, char **argv)
+ 			v6_only = false;
+ 			break;
+ 		case '6':
++			if (c->no_ipv6)
++				die("IPv6 not available but --ipv6-only given");
++
+ 			v6_only = true;
+ 			v4_only = false;
+ 			break;
+diff --git a/passt.h b/passt.h
+index 79d01dd..266563e 100644
+--- a/passt.h
++++ b/passt.h
+@@ -205,6 +205,7 @@ struct ip6_ctx {
+  * @low_wmem:		Low probed net.core.wmem_max
+  * @low_rmem:		Low probed net.core.rmem_max
+  * @no_bindtodevice:	Unprivileged SO_BINDTODEVICE not available
++ * @no_ipv6:		IPv6 sockets not available
+  * @vdev:		vhost-user device
+  * @device_state_fd:	Device state migration channel
+  * @device_state_result: Device state migration result
+@@ -283,6 +284,7 @@ struct ctx {
+ 	int low_wmem;
+ 	int low_rmem;
+ 	int no_bindtodevice;
++	bool no_ipv6;
+ 
+ 	struct vu_dev *vdev;
+ 
+diff --git a/util.c b/util.c
+index bfeb619..f4f8f85 100644
+--- a/util.c
++++ b/util.c
+@@ -331,6 +331,14 @@ void sock_probe_features(struct ctx *c)
+ 		c->no_bindtodevice = 1;
+ 	}
+ 
++	/* Check if IPv6 sockets are usable */
++	close(s);
++	s = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
++	if (s < 0) {
++		c->no_ipv6 = true;
++		return;
++	}
++
+ 	close(s);
+ }
+ 
+-- 
+2.47.1
+
