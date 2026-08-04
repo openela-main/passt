@@ -1,0 +1,62 @@
+From 6d64ba1985c2ba692cadf6199f57401bde1ca5dc Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Thu, 2 Jul 2026 12:15:31 -0400
+Subject: [PATCH] selinux: Access to netns for podman-build, read access for
+ netns in general
+
+A few additional rules are needed when pasta is started by Podman in
+particular cases:
+
+- with podman-build or Buildah, pasta needs to access the target
+  namespace reference using a procfs namespace link entry, instead of
+  the usual directory under /run or /var/run. For that, we have a
+  rule enabling access to container_t:lnk_file.
+
+  On some systems, though, the class is 'dir' instead of 'lnk_file'.
+  I don't have a concrete way to reproduce this or a full explanation,
+  but in any case, an additional rule for that is obviously harmless:
+  allow pasta_t to open, read, and search a container_t:dir
+
+- with custom networks, pasta needs to write PID files to a location
+  indicated by Podman. If the PID file already exists, the existing
+  permissions aren't sufficient: we also need a 'read' rule. Add that,
+  for 'dir' and 'file' objects labeled as either container_var_run_t
+  or ifconfig_var_run_t (this depends on the installed Podman and
+  container-selinux versions)
+
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+(cherry picked from commit e74a7c2c18242617e078fb4e4dc1580de585692e)
+---
+ contrib/selinux/pasta.te | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/contrib/selinux/pasta.te b/contrib/selinux/pasta.te
+index fb51416..10d5c8e 100644
+--- a/contrib/selinux/pasta.te
++++ b/contrib/selinux/pasta.te
+@@ -175,6 +175,7 @@ allow pasta_t container_runtime_t:fifo_file { getattr write };
+ allow pasta_t container_runtime_t:file read;
+ allow pasta_t container_runtime_t:lnk_file read;
+ allow pasta_t container_t:lnk_file read;
++allow pasta_t container_t:dir { open read search };
+ allow pasta_t pasta_port_t:tcp_socket { name_bind name_connect };
+ allow pasta_t pasta_port_t:udp_socket { name_bind };
+ allow pasta_t http_port_t:tcp_socket { name_bind name_connect };
+@@ -249,10 +250,10 @@ type_transition container_runtime_t user_tmp_t : dir ifconfig_var_run_t "netns";
+ type_transition container_runtime_t container_var_run_t : dir ifconfig_var_run_t "netns";
+ type_transition container_runtime_t user_tmp_t : dir ifconfig_var_run_t "rootless-netns";
+ type_transition container_runtime_t container_var_run_t : dir ifconfig_var_run_t "rootless-netns";
+-allow pasta_t container_var_run_t:dir { add_name open rmdir write };
+-allow pasta_t ifconfig_var_run_t:dir { add_name open rmdir write };
+-allow pasta_t container_var_run_t:file { create open write };
+-allow pasta_t ifconfig_var_run_t:file { create open write };
++allow pasta_t container_var_run_t:dir { add_name open read rmdir write };
++allow pasta_t ifconfig_var_run_t:dir { add_name open read rmdir write };
++allow pasta_t container_var_run_t:file { create open read write };
++allow pasta_t ifconfig_var_run_t:file { create open read write };
+ allow systemd_user_runtimedir_t ifconfig_var_run_t:dir rmdir;
+ 
+ # Allow pasta to bind to any port
+-- 
+2.47.1
+

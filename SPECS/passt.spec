@@ -13,7 +13,7 @@
 
 Name:		passt
 Version:	0^20251210.gd04c480
-Release:	5%{?dist}
+Release:	6%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
@@ -38,6 +38,7 @@ Patch17:	0017-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
 Patch18:	0018-tcp-Replace-send-buffer-boost-with-EPOLLOUT-monitori.patch
 Patch19:	0019-udp_vu-Discard-datagrams-when-RX-virtqueue-is-not-us.patch
 Patch20:	0020-conf-util-Disable-IPv6-if-explicit-IPv6-socket-probe.patch
+Patch21:	0021-selinux-Access-to-netns-for-podman-build-read-access.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -152,6 +153,9 @@ fi
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
 
 %changelog
+* Sun Jul 26 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-6
+- Resolves: RHEL-216655
+
 * Thu Jun 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-5
 - Resolves: RHEL-184108 RHEL-184099
 
