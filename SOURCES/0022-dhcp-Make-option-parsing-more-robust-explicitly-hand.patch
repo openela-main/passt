@@ -1,0 +1,111 @@
+From 9016a4f1f0695b61390eea839860dd29b27563f0 Mon Sep 17 00:00:00 2001
+From: Stefano Brivio <sbrivio@redhat.com>
+Date: Thu, 16 Jul 2026 00:56:23 +0200
+Subject: [PATCH] dhcp: Make option parsing more robust, explicitly handle
+ options 0 and 255
+
+The initial option-scanning loop in dhcp(), so far, ignored options 0
+(Pad Option, RFC 2132, Section 3.1) and 255 (End Option, RFC 2132,
+Section 3.2).
+
+As a result:
+
+- if we ever encountered option 0 in the middle of option fields
+  (never seen in practice), we would potentially terminate the loop
+  too early, before scanning remaining options
+
+- a malformed message with an option 255 followed by a length byte
+  would (reliably) cause us to terminate as we would exceed the
+  allocated size for the 'opts' array, which is detected as buffer
+  overflow by the FORTIFY_SOURCE mechanism
+
+The latter was reported as potential vulnerability by AISLE, but it's
+not actually a vulnerability as we always terminate without carrying
+on further handling, and in our security model the guest is able to
+sabotage its own connectivity in any case (for example, a malformed
+frame from the hypervisor would cause us to reset the connection, or
+entirely flooding the flow table would cause inbound connectivity to
+stop working, etc.).
+
+The reported behaviour, however, is indeed a defect, as it affects
+the functional robustness to a hypothetical issue in a DHCP client,
+and that's something we definitely want to fix.
+
+Make the option parsing loop more robust by:
+
+- resizing 'opts' from 255 to 256 elements: there's no particular
+  reason to try to save a tiny bit of memory (which shouldn't even
+  be allocated in practice) instead of being defensive about it
+
+- explicitly handle options 0 (skip one byte, continue) and 255 (stop
+  processing options) in the option-scanning loop
+
+- scanning the last two bytes of options as well and using
+  iov_tail_size(data) directly as loop condition, instead of a rather
+  inconsistent usage of opt_len
+
+This bug was found and an initial version of the patch was written by
+the AISLE AI security scanning tool (https://aisle.com/platform).
+
+Reported-by: AISLE
+Signed-off-by: Stefano Brivio <sbrivio@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 7d0c07728813880d6049abb3dc33dcaf8154ff66)
+---
+ dhcp.c | 22 +++++++++++++---------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/dhcp.c b/dhcp.c
+index 6b9c2e3..4ea0159 100644
+--- a/dhcp.c
++++ b/dhcp.c
+@@ -49,7 +49,7 @@ struct opt {
+ 	uint8_t c[255];
+ };
+ 
+-static struct opt opts[255];
++static struct opt opts[256];
+ 
+ #define DHCPDISCOVER	1
+ #define DHCPOFFER	2
+@@ -363,25 +363,29 @@ int dhcp(const struct ctx *c, struct iov_tail *data)
+ 	for (i = 0; i < ARRAY_SIZE(opts); i++)
+ 		opts[i].clen = -1;
+ 
+-	opt_len = iov_tail_size(data);
+-	while (opt_len >= 2) {
++	while ((opt_len = iov_tail_size(data))) {
+ 		uint8_t olen_storage, type_storage;
+ 		const uint8_t *olen;
+ 		uint8_t *type;
+ 
+-		type = IOV_REMOVE_HEADER(data, type_storage);
+-		olen = IOV_REMOVE_HEADER(data, olen_storage);
+-		if (!type || !olen)
++		if (!(type = IOV_REMOVE_HEADER(data, type_storage)))
+ 			return -1;
+ 
+-		opt_len = iov_tail_size(data);
+-		if (opt_len < *olen)
++		if (*type == 255)
++			break;
++
++		if (*type == 0) /* Pad Option (RFC 2132, 3.1): one byte */
++			continue;
++
++		if (!(olen = IOV_REMOVE_HEADER(data, olen_storage)))
++			return -1;
++
++		if (opt_len - 2 < *olen)
+ 			return -1;
+ 
+ 		iov_to_buf(&data->iov[0], data->cnt, data->off, &opts[*type].c, *olen);
+ 		opts[*type].clen = *olen;
+ 		iov_drop_header(data, *olen);
+-		opt_len -= *olen;
+ 	}
+ 
+ 	opts[80].slen = -1;
+-- 
+2.52.0
+
