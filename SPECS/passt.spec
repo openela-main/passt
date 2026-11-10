@@ -4,42 +4,24 @@
 # PASTA - Pack A Subtle Tap Abstraction
 #  for network namespace/tap device mode
 #
+# PESTO - Programmable Extensible Socket Translation Orchestrator
+#  front-end for passt(1) and pasta(1) forwarding configuration
+#
 # Copyright (c) 2022 Red Hat GmbH
 # Author: Stefano Brivio <sbrivio@redhat.com>
 
-%global git_hash d04c48032bcf724550d0b8f652fd00efcd2dfad0
+%global git_hash f8df3f1b228fe19a74a269334fdfe6cc7d0605ce
 %global selinuxtype targeted
 %global selinux_policy_version 41.41
 
 Name:		passt
-Version:	0^20251210.gd04c480
-Release:	7%{?dist}
+Version:	0^20260728.gf8df3f1
+Release:	1%{?dist}
 Summary:	User-mode networking daemons for virtual machines and namespaces
 License:	GPL-2.0-or-later AND BSD-3-Clause
 Group:		System Environment/Daemons
 URL:		https://passt.top/
 Source:		https://passt.top/passt/snapshot/passt-%{git_hash}.tar.xz
-
-Patch3:		0003-tcp-Use-less-than-MSS-window-on-no-queued-data-or-no.patch
-Patch4:		0004-pasta-Warn-disable-matching-IP-version-if-not-suppor.patch
-Patch5:		0005-selinux-Enable-read-and-watch-permissions-on-netns-d.patch
-Patch6:		0006-selinux-Enable-open-permissions-on-netns-directory-o.patch
-Patch7:		0007-tcp-Fix-rounding-issue-in-check-for-approximating-wi.patch
-Patch8:		0008-udp_flow-remove-unneeded-epoll_ref-indirection.patch
-Patch9:		0009-udp_flow-Assign-socket-to-flow-inside-udp_flow_sock.patch
-Patch10:	0010-tcp_splice-Refactor-tcp_splice_conn_epoll_events-to-.patch
-Patch11:	0011-flow-Introduce-flow_epoll_set-to-centralize-epoll-op.patch
-Patch12:	0012-tcp-Properly-propagate-tap-side-RST-to-socket-side.patch
-Patch13:	0013-udp-Split-activity-timeouts-for-UDP-flows.patch
-Patch14:	0014-tcp-Remove-non-working-activity-timeout-mechanism.patch
-Patch15:	0015-tcp-Re-introduce-inactivity-timeouts-based-on-a-cloc.patch
-Patch16:	0016-tcp-Extend-tcp_send_flag-to-send-TCP-keepalive-segme.patch
-Patch17:	0017-tcp-Send-TCP-keepalive-segments-after-a-period-of-ta.patch
-Patch18:	0018-tcp-Replace-send-buffer-boost-with-EPOLLOUT-monitori.patch
-Patch19:	0019-udp_vu-Discard-datagrams-when-RX-virtqueue-is-not-us.patch
-Patch20:	0020-conf-util-Disable-IPv6-if-explicit-IPv6-socket-probe.patch
-Patch21:	0021-selinux-Access-to-netns-for-podman-build-read-access.patch
-Patch22:	0022-dhcp-Make-option-parsing-more-robust-explicitly-hand.patch
 
 BuildRequires:	gcc, make, git, checkpolicy, selinux-policy-devel
 Requires:	(%{name}-selinux = %{version}-%{release} if selinux-policy-%{selinuxtype})
@@ -72,7 +54,8 @@ Requires(post):		container-selinux
 Requires(post):		selinux-policy-%{selinuxtype}
 
 %description selinux
-This package adds SELinux enforcement to passt(1), pasta(1), passt-repair(1).
+This package adds SELinux enforcement to passt(1), pasta(1), passt-repair(1),
+pesto(1).
 
 %prep
 %autosetup -S git_am -n passt-%{git_hash}
@@ -111,13 +94,14 @@ install -p -m 644 -D passt.pp %{buildroot}%{_datadir}/selinux/packages/%{selinux
 install -p -m 644 -D passt.if %{buildroot}%{_datadir}/selinux/devel/include/distributed/passt.if
 install -p -m 644 -D pasta.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 install -p -m 644 -D passt-repair.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
+install -p -m 644 -D pesto.pp %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/pesto.pp
 popd
 
 %pre selinux
 %selinux_relabel_pre -s %{selinuxtype}
 
 %post selinux
-%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
+%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/passt.pp %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp %{_datadir}/selinux/packages/%{selinuxtype}/pesto.pp
 
 %postun selinux
 if [ $1 -eq 0 ]; then
@@ -134,12 +118,12 @@ fi
 %doc %{_docdir}/%{name}/demo.sh
 %{_bindir}/passt
 %{_bindir}/pasta
-%{_bindir}/qrap
 %{_bindir}/passt-repair
+%{_bindir}/pesto
 %{_mandir}/man1/passt.1*
 %{_mandir}/man1/pasta.1*
-%{_mandir}/man1/qrap.1*
 %{_mandir}/man1/passt-repair.1*
+%{_mandir}/man1/pesto.1*
 %ifarch x86_64
 %{_bindir}/passt.avx2
 %{_mandir}/man1/passt.avx2.1*
@@ -152,19 +136,14 @@ fi
 %{_datadir}/selinux/devel/include/distributed/passt.if
 %{_datadir}/selinux/packages/%{selinuxtype}/pasta.pp
 %{_datadir}/selinux/packages/%{selinuxtype}/passt-repair.pp
+%{_datadir}/selinux/packages/%{selinuxtype}/pesto.pp
 
 %changelog
-* Tue Sep 22 2026 Anshu Kumari <anskuma@redhat.com> - 0^20251210.gd04c480-7
-- Resolves: RHEL-261248
+* Wed Jul 29 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20260728.gf8df3f1-1
+- Resolves: RHEL-185656
 
-* Sun Jul 26 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-6
-- Resolves: RHEL-216655
-
-* Thu Jun 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-5
-- Resolves: RHEL-184108 RHEL-184099
-
-* Tue Apr 21 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-4
-- Resolves: RHEL-169635 RHEL-169642 RHEL-169646
+* Wed Jun 17 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20260611.ga9c61ff-1
+- Resolves: RHEL-185656
 
 * Wed Feb 11 2026 Stefano Brivio <sbrivio@redhat.com> - 0^20251210.gd04c480-3
 - Resolves: RHEL-136495 RHEL-136314
